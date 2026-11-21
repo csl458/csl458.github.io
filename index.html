@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Society of Mind · csl458</title>
+  <meta name="description" content="A living business card: a mind made of agents. Ask it anything and watch the voices hold a meeting." />
+  <meta property="og:title" content="Society of Mind · csl458" />
+  <meta property="og:description" content="Ask my mind anything — and watch the agents inside argue about it." />
+  <meta name="theme-color" content="#03060d" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2303060d' stroke='%234ff0ff' stroke-width='2'/%3E%3Ccircle cx='16' cy='14' r='3' fill='%23fff'/%3E%3Ccircle cx='9' cy='18' r='2' fill='%23ff5470'/%3E%3Ccircle cx='23' cy='18' r='2' fill='%23a98bff'/%3E%3Ccircle cx='16' cy='23' r='2' fill='%235dffa0'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <canvas id="mind" aria-label="A wireframe head with glowing agents inside"></canvas>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <!-- boot -->
+  <div id="boot" aria-hidden="true"><pre id="boot-log"></pre></div>
+
+  <!-- top-left: identity -->
+  <header class="hud hud-tl">
+    <div class="brand"><span class="dot"></span><span data-t="brand">SOCIETY OF MIND</span></div>
+    <h1 id="owner-name">CS458</h1>
+    <p id="owner-tag" class="tag"></p>
+    <div class="meta">
+      <span id="owner-loc"></span>
+      <a id="owner-gh" target="_blank" rel="noopener">github</a>
+      <span id="owner-links"></span>
+    </div>
+  </header>
+
+  <!-- top-right: telemetry -->
+  <div class="hud hud-tr">
+    <div class="tele">
+      <div><label data-t="local">Sydney</label><b id="clock">--:--</b><i id="sleepstate"></i></div>
+      <div><label data-t="agentsLabel">Voices</label><b id="nagents">7</b></div>
+      <div><label data-t="thoughts">Thoughts</label><b id="nthoughts">0</b></div>
+      <div><label data-t="consensus">Consensus</label><b id="consensus">—</b></div>
+    </div>
+    <div class="toggles">
+      <button id="btn-lang" class="ghost" title="中文 / English">中 / EN</button>
+      <button id="btn-about" class="ghost" aria-label="About">?</button>
+    </div>
+  </div>
+
+  <!-- right: minutes -->
+  <aside id="minutes" class="panel">
+    <div class="panel-head">
+      <span class="rec"></span><span data-t="minutes">Meeting minutes</span>
+      <span id="phase" class="phase"></span>
+      <button id="btn-skip" class="ghost tiny" hidden data-t="skip">Fast-forward</button>
+      <button id="btn-collapse" class="ghost tiny collapse" aria-label="Toggle minutes">▾</button>
+    </div>
+    <ol id="phasebar" class="phasebar"></ol>
+    <div id="log" class="log" aria-live="polite"></div>
+    <div id="tally" class="tally"></div>
+  </aside>
+
+  <!-- floating speech bubble -->
+  <div id="bubble" class="bubble" hidden><b></b><span></span></div>
+
+  <!-- answer -->
+  <section id="answer" class="answer" hidden>
+    <div class="answer-head"><span data-t="output">Mind output</span><button id="answer-close" class="ghost tiny" aria-label="Close">✕</button></div>
+    <p id="answer-text"></p>
+  </section>
+
+  <!-- console -->
+  <footer class="console">
+    <div id="chips" class="chips"></div>
+    <form id="ask" autocomplete="off">
+      <span class="prompt">❯</span>
+      <input id="q" maxlength="400" />
+      <button id="ask-btn" type="submit" data-t="ask">Ask</button>
+    </form>
+    <div class="actions">
+      <button id="btn-implant" class="pill" data-t="implant">+ Implant persona</button>
+      <button id="btn-brain" class="pill"><span data-t="brain">⚙ Brain</span>: <b id="brain-mode"></b></button>
+    </div>
+  </footer>
+
+  <!-- agent card -->
+  <div id="agent-card" class="agent-card" hidden>
+    <div class="ac-head"><span class="ac-glyph"></span><div><b class="ac-name"></b><small class="ac-stats"></small></div></div>
+    <p class="ac-role"></p>
+    <div class="ac-actions"></div>
+  </div>
+
+  <!-- implant dialog -->
+  <dialog id="dlg-implant">
+    <form method="dialog" class="dlg">
+      <h2 data-t="implantTitle">Implant a new persona</h2>
+      <p class="sub" data-t="implantSub"></p>
+      <div class="implant-grid">
+        <div class="preview"><canvas id="seed" width="160" height="160"></canvas></div>
+        <div class="fields">
+          <label><span data-t="fName">Name</span><input id="im-name" maxlength="16" /></label>
+          <label><span data-t="fGlyph">Glyph</span><div id="im-glyphs" class="swatches"></div></label>
+          <label><span data-t="fColor">Colour</span><div id="im-colors" class="swatches"></div></label>
+          <label><span data-t="fStyle">Temperament</span><div id="im-styles" class="chips small"></div></label>
+        </div>
+      </div>
+      <label class="full"><span data-t="fDesc">Description</span><textarea id="im-desc" rows="2" maxlength="280"></textarea></label>
+      <div class="dlg-actions">
+        <button value="cancel" class="ghost" data-t="cancel" formnovalidate>Cancel</button>
+        <button type="button" id="im-share" class="ghost" data-t="share">Copy share link</button>
+        <button id="im-go" value="ok" class="primary" data-t="doImplant">Implant</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- brain dialog -->
+  <dialog id="dlg-brain">
+    <form method="dialog" class="dlg">
+      <h2 data-t="brainTitle">Brain mode</h2>
+      <p class="sub pre" data-t="brainSub"></p>
+      <div class="seg" role="radiogroup">
+        <label><input type="radio" name="mode" value="sim" /><span data-t="modeSim">Simulated</span></label>
+        <label><input type="radio" name="mode" value="live" /><span data-t="modeLive">Claude</span></label>
+      </div>
+      <div id="live-fields">
+        <label class="full"><span data-t="fKey">API key</span><input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" /></label>
+        <label class="full"><span data-t="fModel">Model</span><select id="model"></select></label>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" id="key-clear" class="ghost" data-t="clearKey">Forget key</button>
+        <button value="ok" class="primary" data-t="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- about dialog -->
+  <dialog id="dlg-about">
+    <form method="dialog" class="dlg">
+      <h2 data-t="aboutTitle">What is this?</h2>
+      <p id="about-text" class="sub pre"></p>
+      <div class="dlg-actions"><button value="ok" class="primary" data-t="close">Close</button></div>
+    </form>
+  </dialog>
+
+  <!-- incoming persona banner -->
+  <div id="incoming" class="incoming" hidden>
+    <span id="incoming-text"></span>
+    <button id="incoming-yes" class="primary tiny" data-t="accept">Implant it</button>
+    <button id="incoming-no" class="ghost tiny" data-t="decline">No thanks</button>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <noscript><p style="color:#9cf;padding:2rem;font-family:monospace">This mind needs JavaScript to think.</p></noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
