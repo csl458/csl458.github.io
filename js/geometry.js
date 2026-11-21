@@ -75,6 +75,7 @@ export const ANCHORS = {
   mouth: [0, -0.47, 0.86],
   outside: [2.6, 0.35, 0.9],
   front: [0, -0.9, 2.2],
+  board: [0, 0.74, -0.12],
 };
 
 // Camera: yaw around y, pitch around x, perspective onto screen.

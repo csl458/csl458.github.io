@@ -2,10 +2,11 @@ import { OWNER } from './config.js';
 import { T } from './i18n.js';
 import { CORE, STYLES, PALETTE, GLYPHS, corePosition, implantPosition, implantToAgent, sanitizeImplant, encodeAgent, decodeAgent } from './agents.js';
 import { simMeeting, isCJK, IDLE, DREAMS } from './sim.js';
-import { llmMeeting, MODELS, summariseCluster } from './llm.js';
+import { llmMeeting, MODELS, summariseCluster, makeLLMBrain } from './llm.js';
 import { REGIONS, renderLab, bindLab } from './atlas.js';
 import { formName } from './forms.js';
 import { MemoryStore, WorkingMemory, ago } from './memory.js';
+import { TOPOLOGIES, runTopology, simBrain, buildDag, dagMetrics, dagSVG, phaseLabel } from './orchestration.js';
 
 // WebGL renderer when the browser can do it (and three.js loads); the canvas renderer otherwise.
 let MindRenderer;
@@ -36,6 +37,8 @@ let lang = store.get('lang', (navigator.language || '').toLowerCase().startsWith
 let implants = (store.get('implants', []) || []).map(sanitizeImplant).slice(0, 6);
 let brain = Object.assign({ mode: 'sim', model: MODELS[0].id }, store.get('brain', {}));
 let apiKey = store.get('key', '');
+let topology = store.get('topology', 'council');
+if (!TOPOLOGIES[topology]) topology = 'council';
 const stats = Object.assign({ thoughts: 0, agents: {} }, store.get('stats', {}));
 let busy = false, speed = 1, booted = false;
 let agents = [];
@@ -132,10 +135,16 @@ function applyLang() {
   $('#brain-mode').textContent = brain.mode === 'live' && apiKey ? t().brainLive : t().brainSim;
   const chips = $('#chips'); chips.innerHTML = '';
   for (const c of t().chips) { const b = el('button', '', esc(c)); b.type = 'button'; b.onclick = () => { $('#q').value = c; ask(c); }; chips.append(b); }
-  const bar = $('#phasebar'); bar.innerHTML = '';
-  for (const k of Object.keys(t().phases)) { const li = el('li'); li.dataset.k = k; li.title = t().phases[k]; bar.append(li); }
+  buildPhasebar(busy && trace?.topology || topology);
+  $('#topo-mode').textContent = TOPOLOGIES[topology].name[lang];
   if (typeof labelMarkers === 'function') { labelMarkers(); refreshLab(); }
   tick();
+}
+let phaseKeys = TOPOLOGIES.council.phases;
+function buildPhasebar(kind) {
+  phaseKeys = TOPOLOGIES[kind]?.phases || TOPOLOGIES.council.phases;
+  const bar = $('#phasebar'); bar.innerHTML = '';
+  for (const k of phaseKeys) { const li = el('li'); li.dataset.k = k; li.title = phaseLabel(k, lang); bar.append(li); }
 }
 
 // ── minutes ──
@@ -146,17 +155,22 @@ function push(node) {
   log.scrollTop = log.scrollHeight;
 }
 function logLine(a, text, { to, kind, idle } = {}) {
-  const target = to && to !== '*' && byId(to);
+  const target = to === 'board' ? { name: { zh: '▦ 黑板', en: '▦ Board' } } : to && to !== '*' && byId(to);
   const n = el('div', `line${kind === 'hit' || kind === 'reply' ? ' hit' : ''}${idle ? ' idle' : ''}`);
   n.innerHTML = `<span class="g" style="color:${a.color}">${esc(a.glyph)}</span><div><span class="who" style="color:${a.color}">${esc(nm(a))}${target ? ` <em>→ ${esc(nm(target))}</em>` : ''}</span><p>${esc(text)}</p></div>`;
   push(n);
 }
 function setPhase(k) {
-  const keys = Object.keys(t().phases);
-  const idx = keys.indexOf(k);
+  const idx = phaseKeys.indexOf(k);
   $('#phasebar').querySelectorAll('li').forEach((li, i) => { li.className = i < idx ? 'done' : i === idx ? 'on' : ''; });
-  $('#phase').textContent = k ? t().phases[k] : '';
-  if (k) push(el('div', 'sep', esc(t().phases[k])));
+  $('#phase').textContent = k ? phaseLabel(k, lang) : '';
+  if (k) push(el('div', 'sep', esc(phaseLabel(k, lang))));
+}
+function updateLiveDag() {
+  if (!trace) return;
+  const dag = buildDag(trace.events);
+  const last = dag.nodes[dag.nodes.length - 1];
+  $('#dagbox').innerHTML = dagSVG(dag, agents, { width: 400, mini: true, active: last?.id });
 }
 
 // ── speech bubble ──
@@ -224,8 +238,19 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms * speed));
 let liveTally = null;
 
 async function handle(ev) {
-  if (trace) trace.events.push({ ...ev, t: performance.now() });
+  if (trace) { trace.events.push({ ...ev, t: performance.now() }); if (['say', 'dispatch', 'answer', 'recall'].includes(ev.type)) updateLiveDag(); }
   switch (ev.type) {
+    case 'dispatch': {
+      // the orchestrator hands a subtask to a worker
+      const a = byId(ev.to); if (!a) break;
+      renderer.burst('self', ev.to, 5, { color: '#eaf6ff', dur: 0.7, lift: 0.12, gap: 0.05 });
+      renderer.flash(ev.to, 0.8);
+      push(el('div', 'sysrow orch', `⇢ ${esc(t().dispatched(nm(a)))}<small>${esc(ev.text)}</small>`));
+      const c = wm.push('self', byId('self').name[meetingLang], `→ ${a.name[meetingLang]}: ${ev.text}`, meetingLang);
+      updateCtxBar(!!c);
+      await wait(650);
+      break;
+    }
     case 'phase':
       setPhase(ev.key);
       if (ev.key === 'vote') { liveTally = {}; renderTally(liveTally); }
@@ -336,7 +361,10 @@ async function ask(raw, replayEvents) {
   closeRegion();
   renderer.release();
   lastQuestion = q;
-  trace = { q, mode: replayEvents ? 'replay' : brain.mode === 'live' && apiKey ? 'live' : 'sim', start: performance.now(), events: [], ts: Date.now() };
+  const kind = replayEvents ? (lastTrace?.topology || 'council') : topology;
+  trace = { q, topology: kind, mode: replayEvents ? 'replay' : brain.mode === 'live' && apiKey ? 'live' : 'sim', start: performance.now(), events: [], ts: Date.now() };
+  buildPhasebar(kind);
+  $('#dagbox').innerHTML = '';
   $('#ask-btn').disabled = true; $('#ask-btn').textContent = t().thinking;
   $('#btn-skip').hidden = false;
   $('#minutes').classList.add('live');
@@ -365,13 +393,17 @@ async function ask(raw, replayEvents) {
   const ctx = { lang: qlang, owner: OWNER, timeStr, asleep, apiKey, model: brain.model, recalled, workingMemory: () => wm.toText() };
   try {
     if (replayEvents) await play(replayEvents.map(({ t: _t, ...ev }) => ev).filter((ev) => !ev.from || byId(ev.from)));
-    else if (brain.mode === 'live' && apiKey) await play(llmMeeting(q, agents, ctx));
-    else await play(simMeeting(q, agents, ctx));
+    else if (kind === 'council') await play(brain.mode === 'live' && apiKey ? llmMeeting(q, agents, ctx) : simMeeting(q, agents, ctx));
+    else {
+      const b = brain.mode === 'live' && apiKey ? await makeLLMBrain(q, agents, ctx, simBrain(q, agents, ctx).weights) : simBrain(q, agents, ctx);
+      await play(runTopology(kind, q, agents, ctx, b));
+    }
   } catch (e) {
     renderer.setThinking([]);
     push(el('div', 'err', esc(t().errorPrefix + (e.message || e))));
     toast(t().fallback);
-    await play(simMeeting(q, agents, ctx));
+    trace.events = []; wm.reset(q); updateCtxBar(); buildPhasebar(kind);
+    await play(kind === 'council' ? simMeeting(q, agents, ctx) : runTopology(kind, q, agents, ctx, simBrain(q, agents, ctx)));
   } finally {
     trace.end = performance.now();
     wmLast = wm.snapshot(); if (!replayEvents) store.set('wm', wmLast);
@@ -516,7 +548,28 @@ function labCtx() {
     agents, lastTrace, lastQuestion, memory, wmLast, focusId: labFocus, handle: '@' + OWNER.handle,
     onRecallPreview(ids) { for (const id of ids) renderer.flashCrystal(id, 1.3); },
     onDream() { runDream(false); },
-    phaseName: (k) => t().phases[k] || k,
+    phaseName: (k) => phaseLabel(k, lang),
+    topology,
+    onTopology(k) {
+      if (!TOPOLOGIES[k]) return;
+      topology = k; store.set('topology', k);
+      $('#topo-mode').textContent = TOPOLOGIES[k].name[lang];
+      if (!busy) buildPhasebar(k);
+      refreshLab();
+    },
+    // A/B: run the same question through two topologies with the simulated brain, instantly
+    async onCompare(q, kinds) {
+      const qlang = isCJK(q) ? 'zh' : /[a-z]/i.test(q) ? 'en' : lang;
+      const out = [];
+      for (const k of kinds) {
+        const ctx = { lang: qlang, owner: OWNER, timeStr, asleep: false, recalled: [] };
+        const events = [];
+        for await (const ev of runTopology(k, q, agents, ctx, simBrain(q, agents, ctx))) events.push(ev);
+        const dag = buildDag(events);
+        out.push({ kind: k, events, dag, metrics: dagMetrics(dag, events), answer: events.find((e) => e.type === 'answer')?.text || '' });
+      }
+      return out;
+    },
     facts: [
       ['GitHub', '@' + OWNER.handle],
       [lang === 'zh' ? '城市' : 'City', OWNER.location[lang]],
@@ -597,6 +650,7 @@ function closeRegion() {
   document.body.classList.remove('lab-open');
 }
 $('#btn-atlas').onclick = () => setAtlas(!atlasOn);
+$('#btn-topo').onclick = () => openRegion(REGIONS.find((r) => r.id === 'orchestration'));
 $('#lab-close').onclick = closeRegion;
 addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeRegion(); hideCard(); } });
 

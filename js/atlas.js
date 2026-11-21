@@ -1,6 +1,7 @@
 // The brain atlas: each region of the head is one mechanism of a multi-agent system, with a lab panel.
 import { routeScores } from './sim.js';
 import { renderMemoryLab, bindMemoryLab } from './memory-lab.js';
+import { renderOrchLab, bindOrchLab } from './orch-lab.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -18,7 +19,7 @@ export const REGIONS = [
   {
     id: 'orchestration', pos: [0, 0.52, 0.55], color: '#5dffa0', lab: '04', status: 'live',
     organ: { zh: '前额叶', en: 'Prefrontal cortex' }, name: { zh: '编排', en: 'Orchestration' },
-    lead: { zh: '决定会议怎么开：谁先、谁并行、谁互相反驳、怎么收敛。现在跑的是「发散 → 交锋 → 表决 → 合成」。', en: 'Decides how the meeting runs: who goes first, who runs in parallel, who rebuts whom, how it converges. Right now: diverge → clash → vote → synthesise.' },
+    lead: { zh: '决定会议怎么开：谁先、谁并行、谁读谁的输出、怎么收敛。五种编排拓扑，每一种都真的能跑，可以切换、看执行图、做 A/B 对比。', en: 'Decides how the meeting runs: who goes first, who runs in parallel, who reads whose output, how it converges. Five real orchestration topologies to switch between, inspect as a graph, and A/B compare.' },
   },
   {
     id: 'tools', pos: [0, -0.42, -0.55], color: '#ff9b4a', lab: '05', status: 'next',
@@ -73,18 +74,7 @@ export function renderLab(region, lang, ctx) {
   } else if (region.id === 'memory') {
     body = renderMemoryLab(lang, ctx);
   } else if (region.id === 'orchestration') {
-    const tr = ctx.lastTrace;
-    const order = ['perceive', 'diverge', 'clash', 'vote', 'synth'];
-    if (!tr) body = `<div class="pipeline">${order.map((k) => `<div class="node">${esc(ctx.phaseName(k))}</div>`).join('<i>→</i>')}</div><p class="muted">${t.noRun}</p>`;
-    else {
-      const dur = {}; let prev = null;
-      for (const e of tr.events) { if (e.type === 'phase') { if (prev) dur[prev.key] = e.t - prev.t; prev = e; } }
-      if (prev) dur[prev.key] = tr.end - prev.t;
-      const total = Object.values(dur).reduce((s, v) => s + v, 0) || 1;
-      body = `<div class="pipeline">${order.map((k) => `<div class="node">${esc(ctx.phaseName(k))}<small>${dur[k] ? (dur[k] / 1000).toFixed(1) + 's' : '—'}</small></div>`).join('<i>→</i>')}</div>
-        <h3>${t.phases}</h3><div class="gantt">${order.map((k) => `<span style="flex:${(dur[k] || 0) / total}" title="${esc(ctx.phaseName(k))}"></span>`).join('')}</div>
-        <p class="muted">${t.mode}: ${tr.mode === 'live' ? t.liveBrain : t.sim} · ${tr.events.length} ${t.events} · ${t.durations} ${(total / 1000).toFixed(1)}s</p>`;
-    }
+    body = renderOrchLab(lang, ctx);
   } else if (region.id === 'trace') {
     const tr = ctx.lastTrace;
     if (!tr) body = `<p class="muted">${t.noRun}</p>`;
@@ -124,6 +114,7 @@ export function bindLab(root, region, lang, ctx) {
     draw();
   }
   if (region.id === 'memory') bindMemoryLab(root, lang, ctx);
+  if (region.id === 'orchestration') bindOrchLab(root, lang, ctx);
   root.querySelector('#tr-replay')?.addEventListener('click', () => ctx.onReplay?.());
   root.querySelector('#tr-export')?.addEventListener('click', () => ctx.onExport?.());
 }

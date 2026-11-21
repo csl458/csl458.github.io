@@ -174,3 +174,67 @@ export async function summariseCluster(questions, lang, { apiKey, model }) {
   });
   return r.insight || null;
 }
+
+// A Claude-backed "brain" for the orchestration topologies (pipeline, hierarchy, debate, blackboard).
+// Every say() is one independent call with that voice's own persona.
+export async function makeLLMBrain(question, agents, ctx, weights) {
+  const { lang, owner, apiKey, model } = ctx;
+  const client = await getClient(apiKey);
+  const zh = lang === 'zh';
+  const roster = agents.map((a) => `${a.id} ("${a.name.en}")`).join(', ');
+  const self = agents.find((a) => a.id === 'self');
+  const q = question.slice(0, 600);
+  const textSchema = { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false };
+  const recalledText = (ctx.recalled || []).map((r) => `- ${r.agoText}: "${r.q}"${r.a ? ` → "${r.a.slice(0, 140)}"` : ''}`).join('\n');
+  const guard = async (p) => {
+    try { const r = await p; return r; } catch (e) { throw new LLMError(errText(e, zh)); }
+  };
+  const one = async (agent, user, schema = textSchema, maxTokens = 3000) => {
+    const r = await guard(call(client, { model, maxTokens, system: systemFor(agent, roster, owner), user, schema }));
+    if (r.refused) return { refused: true };
+    return r;
+  };
+  return {
+    kind: 'live', weights,
+    opening: () => (zh ? `收到：「${question.slice(0, 20)}」。` : `Incoming: "${question.slice(0, 20)}".`),
+    async say(a, mode, info = {}) {
+      const mem = a.id === 'memory' && recalledText ? `Similar past meetings from your long-term memory:\n${recalledText}\n\n` : '';
+      let task;
+      if (mode === 'relay') task = info.prevAgent ? `You are one leg of a relay. The previous voice (${info.prevAgent.name.en}) handed you this:\n"${info.prev}"\n\nBuild on it — don't repeat it — adding what only you can add.` : 'You run the first leg of a relay. Frame the question for the voices after you.';
+      else if (mode === 'work') task = `Self (the orchestrator) assigned you this subtask: "${info.task}". Do only that.`;
+      else if (mode === 'open') task = info.side === 'pro' ? 'This is a debate and you are the proposer. Give your opening case for the most useful answer, from your angle.' : 'This is a debate and you are the opposition. Give your opening challenge: what is wrong, risky or missing in the obvious answer?';
+      else if (mode === 'rebut') task = `Debate. Your opponent (${info.opponent.name.en}) just said:\n"${info.opponentText}"\n\nRebut it directly.`;
+      else if (mode === 'post') task = info.board ? `There is a shared blackboard. Everything posted so far:\n${info.board}\n\nAdd ONE new post that is not already on the board.` : 'There is a shared blackboard with only the question on it. Post your first contribution.';
+      else task = 'Give your take as this voice.';
+      const r = await one(a, `Visitor's question: """${q}"""\n\n${mem}${task}`);
+      return r.text || (zh ? '（这个念头被拦截了）' : '(this thought was withheld)');
+    },
+    async plan(voices) {
+      const ids = voices.map((v) => v.id);
+      const r = await one(self, `Visitor's question: """${q}"""\n\nYou are the orchestrator. Split the work into 2 or 3 subtasks and assign each to the single best voice (${voices.map((v) => `${v.id} = ${v.name.en}`).join(', ')}). Each subtask is one short imperative sentence, in the visitor's language. Use each voice at most once.`, {
+        type: 'object',
+        properties: { subtasks: { type: 'array', items: { type: 'object', properties: { task: { type: 'string' }, assignee: { type: 'string', enum: ids } }, required: ['task', 'assignee'], additionalProperties: false } } },
+        required: ['subtasks'], additionalProperties: false,
+      });
+      return (r.subtasks || []).map((s) => ({ to: s.assignee, task: s.task }));
+    },
+    async judge(pro, con, transcript) {
+      const r = await one(self, `Visitor's question: """${q}"""\n\nThe debate:\n${transcript.map(([a, t]) => `${a.name.en}: ${t}`).join('\n')}\n\nYou are the judge. Pick the side whose case gives the visitor the better answer, and say why in one sentence (in the visitor's language).`, {
+        type: 'object', properties: { winner: { type: 'string', enum: [pro.id, con.id] }, verdict: { type: 'string' } }, required: ['winner', 'verdict'], additionalProperties: false,
+      });
+      return { winner: r.winner || pro.id, verdict: r.verdict || '' };
+    },
+    async answer({ winner, winnerText, parts, board }) {
+      const wm = ctx.workingMemory?.();
+      const context = wm || (parts ? parts.map(([a, task, t]) => `${a.name.en} (${task}): ${t}`).join('\n') : board || winnerText);
+      const winnerName = agents.find((a) => a.id === winner)?.name.en || winner;
+      const r = await guard(call(client, {
+        model, maxTokens: 4000,
+        system: systemFor(self, roster, owner).replace('under 45 words', 'under 90 words'),
+        user: `Visitor's question: """${q}"""\n\nYour working memory of the meeting (older lines may be compressed into [summary] entries):\n${context}\n\nThe strongest contribution came from ${winnerName}. Now answer the visitor directly, in first person as the whole mind, building mainly on it while keeping anything true the others added.`,
+        schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false },
+      }));
+      return r.answer || (r.refused ? (zh ? '这个问题，我的大脑决定保持沉默。' : 'On this one, the mind chooses silence.') : r.raw);
+    },
+  };
+}

@@ -143,7 +143,7 @@ const FINAL = {
   ai: { zh: ['我的看法：一个模型像一个天才，一群 agent 更像一个社会——会争论、会犯错，也会互相纠错。真正有意思的不是谁最聪明，而是它们如何达成共识。至于意识……我们刚为这事吵了三秒，没结论。'], en: ['My take: one model is a genius; many agents are a society — they argue, make mistakes, and correct each other. The interesting part isn\'t who\'s smartest, it\'s how they reach consensus. As for consciousness… we argued for three seconds. No verdict.'] },
   meaning: { zh: ['会议的结论：意义不是找到的，是被一群互相争吵的念头一起搭起来的——就像刚才这样。'], en: ['The meeting concludes: meaning isn\'t found, it\'s assembled by a crowd of quarrelling thoughts — just like the one you just watched.'] },
   advice: { zh: ['大脑的建议：先做一个最小的、可逆的尝试，给自己定一个复盘日期。「怀疑」负责止损，「做梦」负责方向，「建造」负责今天就动手。'], en: ['The mind advises: take the smallest reversible step and set a date to review it. Skeptic guards the downside, Dreamer holds the direction, Builder starts today.'] },
-  joke: { zh: ['为什么多智能体系统从不孤单？因为它连自言自语都是群聊。', '我们 {n} 个人格开会表决要不要讲笑话，以 {v} 票通过——但没人记得笑话本身。'], en: ['Why is a multi-agent system never lonely? Even its inner monologue is a group chat.', 'My {n} voices voted {v} to tell you a joke. Nobody remembers the joke.'] },
+  joke: { zh: ['为什么多智能体系统从不孤单？因为它连自言自语都是群聊。', '我们 {n} 个人格开会表决要不要讲笑话，{vz}通过——但没人记得笑话本身。'], en: ['Why is a multi-agent system never lonely? Even its inner monologue is a group chat.', 'My {n} voices voted {vz} to tell you a joke. Nobody remembers the joke.'] },
   time: { zh: ['{loc}现在是 {time}。{sleepy}'], en: ['It\'s {time} in {loc}. {sleepy}'] },
 };
 const CLOSERS = {
@@ -272,6 +272,7 @@ export function simMeeting(question, agents, ctx) {
   const winner = ranked[0][0];
   const total = ranked.reduce((s, r) => s + r[1], 0);
   V.v = `${ranked[0][1]}/${total}`;
+  V.vz = lang === 'zh' ? `以 ${V.v} 票` : V.v;
 
   // ── synthesise
   ev.push({ type: 'phase', key: 'synth' });
@@ -328,4 +329,45 @@ export function recallEvents(recalled, lang, memoryAgent) {
     ? `等等，这个我有印象：${r.agoText}有人问过「${q}」${r.winnerName ? `，那次是「${r.winnerName}」胜出` : ''}${more ? `。另外还有 ${more} 段相似的记忆` : ''}。相似度 ${(r.score * 100).toFixed(0)}%。`
     : `Wait, this rings a bell: ${r.agoText} someone asked "${q}"${r.winnerName ? ` and ${r.winnerName} won` : ''}${more ? `. ${more} more similar memor${more > 1 ? 'ies' : 'y'} surfaced too` : ''}. Similarity ${(r.score * 100).toFixed(0)}%.`;
   return [{ type: 'recall', ids: recalled.map((x) => x.id) }, { type: 'say', from: 'memory', to: 'self', text, kind: 'recall' }];
+}
+
+// ── A reusable simulated voice, so other orchestration topologies speak with the same lines as the council.
+export function simVoice(question, agents, ctx, salt = '') {
+  const { lang, owner, timeStr, asleep } = ctx;
+  const rng = seeded(question.trim().toLowerCase() + '|' + salt);
+  const cat = classify(question);
+  const short = question.length > 22 ? question.slice(0, 21) + '…' : question;
+  const V = { ...ownerVars(owner, lang, timeStr, asleep), q: short, n: agents.length };
+  const byId = Object.fromEntries(agents.map((a) => [a.id, a]));
+  const nm = (a) => (a ? a.name[lang] : '?');
+  const said = new Set();
+  const fresh = (pool) => { const left = pool.filter((s) => !said.has(s)); const s = pick(rng, left.length ? left : pool); said.add(s); return s; };
+  return {
+    cat, lead: LEAD[cat], rng, lang, short,
+    propose(a) {
+      if (!a.core) return fill(fresh(STYLES[a.style].say[lang]), V);
+      const special = SAY_CAT[cat]?.[a.id]?.[lang];
+      const pool = special && (a.id === LEAD[cat] || rng() < 0.85) ? special : SAY[a.id]?.[lang] || SAY.curious[lang];
+      return fill(fresh(pool), V);
+    },
+    hit(a, target) {
+      const pool = a.core ? HIT[a.id]?.[lang] || HIT.skeptic[lang] : STYLES[a.style].hit[lang];
+      return fill(fresh(pool), { t: nm(target) });
+    },
+    reply(a, target) { return fill(fresh(REPLY[lang]), { t: nm(target) }); },
+    opening() {
+      return pick(rng, lang === 'zh'
+        ? [`收到一个问题：「${short}」。`, `新输入：「${short}」。`, `有人问：「${short}」。`]
+        : [`Incoming: "${short}".`, `New input: "${short}".`, `Someone asks: "${short}".`]);
+    },
+    final(winnerId, winnerText, votesText) {
+      const vz = votesText ? (lang === 'zh' ? `以 ${votesText} 票` : votesText) : (lang === 'zh' ? '全票' : 'unanimously');
+      if (FINAL[cat]) return fill(pick(rng, FINAL[cat][lang]), { ...V, v: votesText || '', vz });
+      const w = byId[winnerId];
+      return lang === 'zh'
+        ? `综合下来，「${nm(w)}」的思路最站得住：${winnerText} ${pick(rng, CLOSERS.zh)}`
+        : `All things weighed, ${nm(w)}'s line holds up best: ${winnerText} ${pick(rng, CLOSERS.en)}`;
+    },
+    rivalOf(id) { return RIVAL[id] || []; },
+  };
 }
