@@ -283,6 +283,7 @@ export function simMeeting(question, agents, ctx) {
       ? `「${nm(byId[winner])}」以 ${V.v} 票胜出：${proposals[winner]} ${pick(rng, CLOSERS.zh)}`
       : `${nm(byId[winner])} carries it, ${V.v} votes: ${proposals[winner]} ${pick(rng, CLOSERS.en)}`;
   }
+  answer = withToolNote(answer, ctx, FINAL[cat], rng, lang);
   ev.push({ type: 'answer', text: answer, winner, tally });
   return ev;
 }
@@ -362,7 +363,8 @@ export function simVoice(question, agents, ctx, salt = '') {
     },
     final(winnerId, winnerText, votesText) {
       const vz = votesText ? (lang === 'zh' ? `以 ${votesText} 票` : votesText) : (lang === 'zh' ? '全票' : 'unanimously');
-      if (FINAL[cat]) return fill(pick(rng, FINAL[cat][lang]), { ...V, v: votesText || '', vz });
+      if (FINAL[cat]) return withToolNote(fill(pick(rng, FINAL[cat][lang]), { ...V, v: votesText || '', vz }), ctx, true, rng, lang);
+      if (ctx.toolNote) return withToolNote('', ctx, false, rng, lang);
       const w = byId[winnerId];
       return lang === 'zh'
         ? `综合下来，「${nm(w)}」的思路最站得住：${winnerText} ${pick(rng, CLOSERS.zh)}`
@@ -370,4 +372,10 @@ export function simVoice(question, agents, ctx, salt = '') {
     },
     rivalOf(id) { return RIVAL[id] || []; },
   };
+}
+
+// When tools fetched live facts, the answer leads with them (and keeps a category answer if there is one).
+function withToolNote(answer, ctx, hasFinal, rng, lang) {
+  if (!ctx.toolNote) return answer;
+  return hasFinal && answer ? `${ctx.toolNote} ${answer}` : `${ctx.toolNote} ${pick(rng, CLOSERS[lang])}`;
 }

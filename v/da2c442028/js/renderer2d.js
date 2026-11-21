@@ -1,5 +1,6 @@
 // Canvas renderer: wireframe head, agents, synapses and message pulses.
 import { buildHead, makeProjector, bezier3, arcControl, ANCHORS } from './geometry.js';
+import { OrbitControl } from './orbit.js';
 
 const TAU = Math.PI * 2;
 const hexRgb = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
@@ -19,7 +20,6 @@ export class MindRenderer {
     this.t = 0;
     this.assemble = 0;
     this.sleep = 0; this.sleepTarget = 0;
-    this.mouse = { x: 0.5, y: 0.5, active: false };
     this.yaw = 0; this.pitch = -0.06;
     this.hover = null;
     this.focus = 0; // brightens the head during meetings
@@ -34,11 +34,13 @@ export class MindRenderer {
     });
     this.resize();
     addEventListener('resize', () => this.resize());
-    addEventListener('pointermove', (e) => {
-      this.mouse.x = e.clientX / innerWidth; this.mouse.y = e.clientY / innerHeight; this.mouse.active = e.pointerType === 'mouse';
+    this.orbit = new OrbitControl(canvas, { onMove: (e, dragging) => {
+      if (dragging) { this.hover = null; return; }
       this.hover = this.hitTest(e.clientX, e.clientY);
-      this.cv.style.cursor = this.hover ? 'pointer' : 'default';
-    });
+      this.cv.style.cursor = this.hover ? 'pointer' : 'grab';
+    } });
+    canvas.style.cursor = 'grab';
+    this.consumeDrag = () => this.orbit.consumeDrag();
     this.last = performance.now();
     requestAnimationFrame((n) => this.loop(n));
   }
@@ -51,8 +53,8 @@ export class MindRenderer {
     this.cv.style.width = this.w + 'px'; this.cv.style.height = this.h + 'px';
     const wide = this.w > 960;
     this.cx = wide ? this.w * 0.42 : this.w / 2;
-    this.cy = wide ? this.h * 0.44 : this.h * 0.41;
-    this.scale = wide ? Math.min(this.h * 0.29, this.w * 0.21) : Math.min(this.w * 0.38, this.h * 0.21);
+    this.cy = wide ? this.h * 0.46 : this.h * 0.48;
+    this.scale = wide ? Math.min(this.h * 0.34, this.w * 0.25) : Math.min(this.w * 0.44, this.h * 0.24);
   }
 
   setAgents(list) {
@@ -84,7 +86,7 @@ export class MindRenderer {
     for (const a of this.agents.values()) {
       const p = this.proj(this.posOf(a.id));
       const d = Math.hypot(p.x - x, p.y - y);
-      if (d < Math.max(18, this.orbR(a, p) * 2) && d < bd) { bd = d; best = a.id; }
+      if (d < Math.max(28, this.orbR(a, p) * 2.6) && d < bd) { bd = d; best = a.id; }
     }
     return best;
   }
@@ -115,11 +117,10 @@ export class MindRenderer {
     this.sleep += (this.sleepTarget - this.sleep) * Math.min(1, dt * 1.5);
     this.focus += (this.focusTarget - this.focus) * Math.min(1, dt * 2);
     // rest in a three-quarter view so the profile reads; drift and follow the pointer around it
-    const sway = 0.72 + Math.sin(this.t * 0.17) * 0.32 * (1 - this.sleep * 0.6);
-    const targetYaw = this.mouse.active ? 0.72 + (this.mouse.x - 0.5) * 1.6 + Math.sin(this.t * 0.17) * 0.1 : sway;
-    const targetPitch = -0.06 + (this.mouse.active ? (this.mouse.y - 0.5) * 0.3 : Math.sin(this.t * 0.11) * 0.05) + this.sleep * 0.1;
-    this.yaw += (targetYaw - this.yaw) * Math.min(1, dt * 2.2);
-    this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 2.2);
+    this.orbit.update(dt, { hovering: !!this.hover, sleep: this.sleep });
+    const follow = this.orbit.drag ? 14 : 4;
+    this.yaw += (this.orbit.yawGoal - this.yaw) * Math.min(1, dt * follow);
+    this.pitch += (this.orbit.pitchGoal - this.pitch) * Math.min(1, dt * follow);
     for (const a of this.agents.values()) {
       a.act *= Math.exp(-dt * 2.2);
       a.speak += ((a.speaking ? 1 : 0) - a.speak) * Math.min(1, dt * 6);
@@ -146,7 +147,7 @@ export class MindRenderer {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.clearRect(0, 0, w, h);
-    const proj = (this.proj = makeProjector({ yaw: this.yaw, pitch: this.pitch, scale: this.scale, cx: this.cx, cy: this.cy }));
+    const proj = (this.proj = makeProjector({ yaw: this.yaw, pitch: this.pitch, scale: this.scale / this.orbit.zoom, cx: this.cx, cy: this.cy }));
     ctx.globalCompositeOperation = 'lighter';
     const sl = this.sleep;
     const headRgb = [Math.round(90 + 60 * sl), Math.round(210 - 90 * sl), 255];

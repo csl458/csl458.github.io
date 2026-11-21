@@ -7,6 +7,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildHead, bezier3, arcControl, ANCHORS } from './geometry.js';
 import { makeForm, formName } from './forms.js';
+import { OrbitControl } from './orbit.js';
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -93,7 +94,6 @@ export class MindRenderer {
     this.t = 0; this.assemble = 0;
     this.sleep = 0; this.sleepTarget = 0;
     this.focus = 0; this.focusTarget = 0;
-    this.mouse = { x: 0.5, y: 0.5, active: false };
     this.yaw = 0.72; this.pitch = -0.06;
     this.hover = null;
     this.agents = new Map();
@@ -123,11 +123,13 @@ export class MindRenderer {
 
     this.resize();
     addEventListener('resize', () => this.resize());
-    addEventListener('pointermove', (e) => {
-      this.mouse.x = e.clientX / innerWidth; this.mouse.y = e.clientY / innerHeight; this.mouse.active = e.pointerType === 'mouse';
+    // drag to rotate, wheel to zoom, double-click to reset (the head no longer chases the mouse)
+    this.orbit = new OrbitControl(canvas, { onMove: (e, dragging) => {
+      if (dragging) { this.hover = null; return; }
       this.hover = this.hitTest(e.clientX, e.clientY);
-      this.cv.style.cursor = this.hover ? 'pointer' : 'default';
-    });
+      this.cv.style.cursor = this.hover ? 'pointer' : 'grab';
+    } });
+    canvas.style.cursor = 'grab';
     this.last = performance.now();
     this.gl.setAnimationLoop((now) => this.loop(now));
   }
@@ -221,8 +223,8 @@ export class MindRenderer {
     this.composer.setSize(this.w, this.h);
     const wide = this.w > 960;
     this.cx = wide ? this.w * 0.42 : this.w / 2;
-    this.cy = wide ? this.h * 0.44 : this.h * 0.41;
-    this.unitPx = wide ? Math.min(this.h * 0.29, this.w * 0.21) : Math.min(this.w * 0.38, this.h * 0.21);
+    this.cy = wide ? this.h * 0.46 : this.h * 0.48;
+    this.unitPx = wide ? Math.min(this.h * 0.34, this.w * 0.25) : Math.min(this.w * 0.44, this.h * 0.24);
     this.baseDist = this.h / (2 * this.unitPx * Math.tan((FOV * Math.PI) / 360));
     this.camera.aspect = this.w / this.h;
     this.camera.setViewOffset(this.w, this.h, this.w / 2 - this.cx, this.h / 2 - this.cy, this.w, this.h);
@@ -322,7 +324,7 @@ export class MindRenderer {
     list.forEach((c, i) => {
       let s = this.crystals.get(c.id);
       if (!s) {
-        const geo = new THREE.EdgesGeometry(c.insight ? new THREE.IcosahedronGeometry(0.055, 0) : new THREE.OctahedronGeometry(0.036, 0));
+        const geo = new THREE.EdgesGeometry(c.tool ? new THREE.TetrahedronGeometry(0.075, 0) : c.insight ? new THREE.IcosahedronGeometry(0.055, 0) : new THREE.OctahedronGeometry(0.036, 0));
         const mesh = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: c.color, ...additive, opacity: 0 }));
         mesh.frustumCulled = false; this.world.add(mesh);
         s = { mesh, pos: [0, 0, 0], glow: 0, born: 0, spin: Math.random() * TAU };
@@ -351,7 +353,7 @@ export class MindRenderer {
       }
       const s = this.screenOf(a.id); if (!s) continue;
       const d = Math.hypot(s.x - x, s.y - y);
-      if (d < Math.max(18, s.r * 1.6) && d < bd) { bd = d; best = a.id; }
+      if (d < Math.max(28, s.r * 2.4) && d < bd) { bd = d; best = a.id; }
     }
     return best;
   }
@@ -385,11 +387,13 @@ export class MindRenderer {
     if (this.stageId === a.id) this.stageId = null;
   }
   isStaged(id) { return this.stageId === id; }
+  consumeDrag() { return this.orbit.consumeDrag(); }
   // Fly the camera to a point in head space (brain atlas), or back home with null.
   focusOn(p, color) {
-    if (!p) { this.camTargetGoal.set(0, 0, 0); this.zoomGoal = 1; this.yawOverride = null; this.focusAmtGoal = 0; return; }
+    if (!p) { this.camTargetGoal.set(0, 0, 0); this.zoomGoal = 1; this.yawOverride = null; this.focusAmtGoal = 0; this.orbit.sync(this.yaw, this.pitch); return; }
     const r = Math.hypot(p[0], p[2]);
-    this.yawOverride = r > 0.15 ? Math.atan2(-p[0], p[2]) + 0.35 : 0.5;
+    const want = r > 0.15 ? Math.atan2(-p[0], p[2]) + 0.35 : 0.5;
+    this.yawOverride = want + Math.round((this.yaw - want) / TAU) * TAU;
     this.focusPendingP = p;
     this.zoomGoal = 0.62; this.focusAmtGoal = 1;
     this.focusPos.set(p[0], p[1], p[2]); this.focusColor.set(color || '#ffffff');
@@ -411,17 +415,17 @@ export class MindRenderer {
     this.focusAmt += (this.focusAmtGoal - this.focusAmt) * k(3);
     this.zoom += (this.zoomGoal - this.zoom) * k(2.4);
 
-    const sway = 0.72 + Math.sin(t * 0.17) * 0.32 * (1 - this.sleep * 0.6);
-    let targetYaw = this.mouse.active ? 0.72 + (this.mouse.x - 0.5) * 1.6 + Math.sin(t * 0.17) * 0.1 : sway;
-    let targetPitch = -0.06 + (this.mouse.active ? (this.mouse.y - 0.5) * 0.3 : Math.sin(t * 0.11) * 0.05) + this.sleep * 0.1;
-    if (this.yawOverride != null) { targetYaw = this.yawOverride + (this.mouse.active ? (this.mouse.x - 0.5) * 0.3 : 0); targetPitch = -0.05; }
-    this.yaw += (targetYaw - this.yaw) * k(2.2);
-    this.pitch += (targetPitch - this.pitch) * k(2.2);
+    this.orbit.update(dt, { hovering: !!this.hover, sleep: this.sleep });
+    let targetYaw = this.orbit.yawGoal, targetPitch = this.orbit.pitchGoal;
+    if (this.yawOverride != null) { targetYaw = this.yawOverride; targetPitch = -0.05; }
+    const follow = this.orbit.drag ? 14 : 4;
+    this.yaw += (targetYaw - this.yaw) * k(follow);
+    this.pitch += (targetPitch - this.pitch) * k(follow);
     this.world.rotation.set(this.pitch, this.yaw, 0);
     this.world.updateMatrixWorld(true);
     if (this.focusPendingP && this.focusAmtGoal > 0) this.camTargetGoal.copy(this.toWorld(this.focusPendingP)).multiplyScalar(0.9);
     this.camTarget.lerp(this.camTargetGoal, k(2.4));
-    this.camera.position.set(this.camTarget.x, this.camTarget.y, this.camTarget.z + this.baseDist * this.zoom);
+    this.camera.position.set(this.camTarget.x, this.camTarget.y, this.camTarget.z + this.baseDist * this.zoom * this.orbit.zoom);
     this.camera.lookAt(this.camTarget);
     this.camera.updateMatrixWorld();
     this.starGroup.rotation.y = this.yaw * 0.25;
@@ -519,18 +523,20 @@ export class MindRenderer {
     // memory crystals: episodes on an inner tilted orbit, insights (from dreams) on an outer one
     {
       const C = this.cdots; let ci = 0;
-      const eps = [...this.crystals.values()].filter((c) => !c.insight), ins = [...this.crystals.values()].filter((c) => c.insight);
+      const eps = [...this.crystals.values()].filter((c) => !c.insight && !c.tool), ins = [...this.crystals.values()].filter((c) => c.insight);
+      for (const c of this.crystals.values()) if (c.tool) c.pos = [c.fixed[0], c.fixed[1] + Math.sin(t * 0.8 + c.spin) * 0.03, c.fixed[2]];
       const place = (c, k, n, R, y0, tilt, speed) => {
         const a = (k / Math.max(1, n)) * TAU + t * speed;
         const x = Math.cos(a) * R, z = Math.sin(a) * R;
         c.pos = [x, y0 + Math.sin(a) * tilt + Math.sin(t * 0.7 + k) * 0.02, z - 0.05];
       };
-      eps.forEach((c, k) => place(c, k, eps.length, 1.18, 0.12, 0.28, 0.06));
-      ins.forEach((c, k) => place(c, k, ins.length, 1.5, 0.45, 0.18, -0.035));
+      // a halo of memories over the crown (out of the way of the voices inside), insights in a smaller ring above it
+      eps.forEach((c, k) => place(c, k, eps.length, 0.72, 1.12, 0.05, 0.06));
+      ins.forEach((c, k) => place(c, k, ins.length, 0.4, 1.32, 0.03, -0.05));
       for (const c of this.crystals.values()) {
         c.born = Math.min(1, c.born + dt / 1.4);
         c.glow *= Math.exp(-dt * 1.2);
-        const vis = c.insight ? 1 : clamp((c.retention - 0.04) / 0.3, 0, 1) * 0.7 + 0.3 * Math.min(1, c.retention / 0.04);
+        const vis = c.tool ? 0.45 : c.insight ? 1 : clamp((c.retention - 0.04) / 0.3, 0, 1) * 0.7 + 0.3 * Math.min(1, c.retention / 0.04);
         const op = (0.18 + 0.75 * vis + 0.6 * c.glow) * ease(c.born) * clamp((this.assemble - 0.6) / 0.4, 0, 1);
         c.mesh.position.set(...c.pos);
         c.mesh.rotation.set(t * 0.6 + c.spin, t * 0.9 + c.spin, 0);
@@ -540,7 +546,7 @@ export class MindRenderer {
           C.P.set(c.pos, ci * 3);
           const col = c.mesh.material.color;
           C.C.set([col.r, col.g, col.b], ci * 3);
-          C.S[ci] = (c.insight ? 0.09 : 0.05) * (1 + 1.2 * c.glow);
+          C.S[ci] = (c.tool ? 0.07 : c.insight ? 0.09 : 0.05) * (1 + 1.2 * c.glow);
           C.A[ci] = Math.min(1, op * 0.8);
           ci++;
         }

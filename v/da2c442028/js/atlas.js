@@ -2,6 +2,8 @@
 import { routeScores } from './sim.js';
 import { renderMemoryLab, bindMemoryLab } from './memory-lab.js';
 import { renderOrchLab, bindOrchLab } from './orch-lab.js';
+import { renderToolsLab, bindToolsLab } from './tools-lab.js';
+import { renderCriticLab, bindCriticLab } from './critic-lab.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -22,14 +24,14 @@ export const REGIONS = [
     lead: { zh: '决定会议怎么开：谁先、谁并行、谁读谁的输出、怎么收敛。五种编排拓扑，每一种都真的能跑，可以切换、看执行图、做 A/B 对比。', en: 'Decides how the meeting runs: who goes first, who runs in parallel, who reads whose output, how it converges. Five real orchestration topologies to switch between, inspect as a graph, and A/B compare.' },
   },
   {
-    id: 'tools', pos: [0, -0.42, -0.55], color: '#ff9b4a', lab: '05', status: 'next',
+    id: 'tools', pos: [0, -0.42, -0.55], color: '#ff9b4a', lab: '05', status: 'live',
     organ: { zh: '小脑', en: 'Cerebellum' }, name: { zh: '工具', en: 'Tools' },
-    lead: { zh: '让人格伸出触须，抓取头外的工具：读取 GitHub、查维基、看天气、算数。', en: 'Lets voices reach outside the head for tools: read GitHub, look things up, check the weather, do maths.' },
+    lead: { zh: '让人格伸出触须，抓取头外的工具。五个真实工具绕着头飘浮：GitHub、维基百科、天气、计算器、世界时钟。会议开始前先取证，结果进入每个人格的上下文和最终答案；Claude 大脑模式下是真正的 tool use 循环。', en: 'Lets voices reach outside the head. Five real tools float around it: GitHub, Wikipedia, weather, a calculator and a world clock. Facts are gathered before the meeting and flow into every voice\'s context and the answer; with the Claude brain it is a real tool-use loop.' },
   },
   {
-    id: 'critic', pos: [-0.34, -0.12, 0.32], color: '#ff5470', lab: '06', status: 'next',
+    id: 'critic', pos: [-0.34, -0.12, 0.32], color: '#ff5470', lab: '06', status: 'live',
     organ: { zh: '杏仁核', en: 'Amygdala' }, name: { zh: '评审', en: 'Critic' },
-    lead: { zh: '答案出口前的免疫系统：对照记忆里的事实打分，标出可能编造的句子。', en: 'The immune system at the exit: scores the answer against remembered facts and flags anything that might be made up.' },
+    lead: { zh: '答案出口前的免疫系统：把答案拆成一条条主张，逐条对照证据（配置、工具数据、记忆、会议），抓出矛盾和编造，必要时打回修改。「怀疑」会化身棱镜之盾在嘴边扫描。', en: 'The immune system at the exit: the answer is split into claims, each checked against evidence (config, tool data, memory, the meeting); contradictions and inventions are caught and sent back. Skeptic becomes the Lens Shield and scans it at the mouth.' },
   },
   {
     id: 'trace', pos: [0, 0.3, -0.88], color: '#a98bff', lab: '07', status: 'live',
@@ -88,11 +90,9 @@ export function renderLab(region, lang, ctx) {
         <div class="lab-actions"><button class="primary tiny" id="tr-replay">${t.replay}</button><button class="ghost tiny" id="tr-export">${t.export}</button></div>`;
     }
   } else if (region.id === 'tools') {
-    const items = lang === 'zh' ? ['GitHub：实时读取主人的仓库和活动', '维基百科：查概念', '天气：悉尼现在怎么样', '计算器与时区换算'] : ['GitHub: read the owner\'s repos and activity live', 'Wikipedia: look up concepts', 'Weather: what\'s Sydney like right now', 'Calculator and time zones'];
-    body = `<h3>${t.planned}</h3><ul class="planned">${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    body = renderToolsLab(lang, ctx);
   } else if (region.id === 'critic') {
-    const items = lang === 'zh' ? ['对照语义记忆核对每句话', '给答案一个置信度', '高亮可能编造的内容', '必要时打回重开会议'] : ['Check every sentence against semantic memory', 'Give the answer a confidence score', 'Highlight anything that may be invented', 'Send it back for another meeting if needed'];
-    body = `<h3>${t.plannedCritic}</h3><ul class="planned">${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    body = renderCriticLab(lang, ctx);
   }
   return head + `<div class="lab-body">${body}</div>`;
 }
@@ -115,6 +115,8 @@ export function bindLab(root, region, lang, ctx) {
   }
   if (region.id === 'memory') bindMemoryLab(root, lang, ctx);
   if (region.id === 'orchestration') bindOrchLab(root, lang, ctx);
+  if (region.id === 'tools') bindToolsLab(root, lang, ctx);
+  if (region.id === 'critic') bindCriticLab(root, lang, ctx);
   root.querySelector('#tr-replay')?.addEventListener('click', () => ctx.onReplay?.());
   root.querySelector('#tr-export')?.addEventListener('click', () => ctx.onExport?.());
 }

@@ -49,11 +49,11 @@ export const CORE = [
 export function corePosition(i) {
   if (i === 0) return [0, 0.34, -0.06];
   const a = ((i - 1) / 6) * Math.PI * 2 + 0.4;
-  return [Math.sin(a) * 0.43, 0.33 + Math.cos(a * 2) * 0.15, -0.08 + Math.cos(a) * 0.38];
+  return [Math.sin(a) * 0.54, 0.33 + Math.cos(a * 2) * 0.2, -0.08 + Math.cos(a) * 0.46];
 }
 export function implantPosition(k) {
   const a = (k / 6) * Math.PI * 2 + 0.95;
-  return [Math.sin(a) * 0.5, k % 2 ? 0.08 : 0.58, -0.1 + Math.cos(a) * 0.46];
+  return k % 2 ? [Math.sin(a) * 0.58, -0.02, -0.1 + Math.cos(a) * 0.5] : [Math.sin(a) * 0.4, 0.7, -0.1 + Math.cos(a) * 0.4];
 }
 
 export const PALETTE = ['#4ff0ff', '#ff5470', '#a98bff', '#5dffa0', '#ffc24a', '#ff7ad9', '#ff9b4a', '#7aa8ff'];
