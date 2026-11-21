@@ -13,6 +13,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
+  <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }</script>
 </head>
 <body>
   <canvas id="mind" aria-label="A wireframe head with glowing agents inside"></canvas>
@@ -43,6 +44,7 @@
       <div><label data-t="consensus">Consensus</label><b id="consensus">—</b></div>
     </div>
     <div class="toggles">
+      <button id="btn-atlas" class="ghost" data-t="atlas">◎ Atlas</button>
       <button id="btn-lang" class="ghost" title="中文 / English">中 / EN</button>
       <button id="btn-about" class="ghost" aria-label="About">?</button>
     </div>
@@ -59,6 +61,13 @@
     <ol id="phasebar" class="phasebar"></ol>
     <div id="log" class="log" aria-live="polite"></div>
     <div id="tally" class="tally"></div>
+  </aside>
+
+  <!-- brain atlas: region markers + lab panel -->
+  <div id="atlas-markers" class="atlas-markers"></div>
+  <aside id="lab" class="panel lab" hidden>
+    <button id="lab-close" class="ghost tiny lab-close" data-t="labClose">✕ Back</button>
+    <div id="lab-body" class="lab-scroll"></div>
   </aside>
 
   <!-- floating speech bubble -->

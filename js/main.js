@@ -1,9 +1,22 @@
 import { OWNER } from './config.js';
 import { T } from './i18n.js';
 import { CORE, STYLES, PALETTE, GLYPHS, corePosition, implantPosition, implantToAgent, sanitizeImplant, encodeAgent, decodeAgent } from './agents.js';
-import { MindRenderer } from './renderer.js';
 import { simMeeting, isCJK, IDLE, DREAMS } from './sim.js';
 import { llmMeeting, MODELS } from './llm.js';
+import { REGIONS, renderLab, bindLab } from './atlas.js';
+import { formName } from './forms.js';
+
+// WebGL renderer when the browser can do it (and three.js loads); the canvas renderer otherwise.
+let MindRenderer;
+try {
+  if (new URLSearchParams(location.search).has('2d')) throw new Error('2d requested');
+  const probe = document.createElement('canvas');
+  if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) throw new Error('no webgl');
+  ({ MindRenderer } = await import('./renderer3d.js'));
+} catch {
+  ({ MindRenderer } = await import('./renderer2d.js'));
+  document.documentElement.classList.add('r2d');
+}
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -28,8 +41,25 @@ let agents = [];
 const t = () => T[lang];
 
 // ── mind ──
-const renderer = new MindRenderer($('#mind'));
+let renderer;
+try { renderer = new MindRenderer($('#mind')); }
+catch (err) {
+  console.warn('WebGL renderer failed, using canvas:', err);
+  const fresh = $('#mind').cloneNode(false); $('#mind').replaceWith(fresh); // a canvas can't switch from webgl to 2d
+  ({ MindRenderer } = await import('./renderer2d.js'));
+  document.documentElement.classList.add('r2d');
+  renderer = new MindRenderer(fresh);
+}
 window.__mind = renderer; // handy for poking at it from devtools
+// the canvas fallback has no creatures or camera moves: give it harmless stand-ins
+if (!renderer.materialize) {
+  Object.assign(renderer, {
+    materialize() {}, release() {}, isStaged: () => false, focusOn() {}, stageWorld: null,
+    project(p) { const q = this.proj?.(p); return q ? { x: q.x, y: q.y, front: q.z > -0.2 } : { x: -999, y: -999, front: false }; },
+  });
+}
+let history_ = store.get('history', []) || [];
+let lastTrace = null, trace = null, lastQuestion = '';
 function buildAgents(bornId) {
   agents = [
     ...CORE.map((a, i) => ({ ...a, pos: corePosition(i) })),
@@ -74,6 +104,7 @@ function applyLang() {
   for (const c of t().chips) { const b = el('button', '', esc(c)); b.type = 'button'; b.onclick = () => { $('#q').value = c; ask(c); }; chips.append(b); }
   const bar = $('#phasebar'); bar.innerHTML = '';
   for (const k of Object.keys(t().phases)) { const li = el('li'); li.dataset.k = k; li.title = t().phases[k]; bar.append(li); }
+  if (typeof labelMarkers === 'function') { labelMarkers(); refreshLab(); }
   tick();
 }
 
@@ -163,6 +194,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms * speed));
 let liveTally = null;
 
 async function handle(ev) {
+  if (trace) trace.events.push({ ...ev, t: performance.now() });
   switch (ev.type) {
     case 'phase':
       setPhase(ev.key);
@@ -204,7 +236,14 @@ async function handle(ev) {
       const total = Object.values(tally).reduce((s, n) => s + n, 0);
       const top = Math.max(0, ...Object.values(tally));
       $('#consensus').textContent = total ? Math.round((top / total) * 100) + '%' : '—';
-      if (ev.winner) { bump(ev.winner, 'w'); renderer.wave(ev.winner); renderTally(tally); }
+      if (ev.winner) {
+        bump(ev.winner, 'w'); renderTally(tally);
+        if (trace) trace.winner = ev.winner;
+        // the winning voice materialises before the mind answers
+        renderer.materialize(ev.winner, 5600);
+        setTimeout(() => renderer.wave(ev.winner), 900);
+        await wait(1300);
+      }
       // everyone converges on Self, then the answer leaves through the mouth
       for (const o of agents) if (o.id !== 'self') renderer.burst(o.id, 'self', 3, { color: o.color, dur: 0.8, size: 0.9 });
       renderer.setSpeaking('self');
@@ -242,10 +281,14 @@ async function play(events) {
   for await (const ev of events) await handle(ev);
 }
 
-async function ask(raw) {
+async function ask(raw, replayEvents) {
   const q = raw.trim();
   if (busy || !q) return;
   busy = true; speed = 1;
+  closeRegion();
+  renderer.release();
+  lastQuestion = q;
+  trace = { q, mode: replayEvents ? 'replay' : brain.mode === 'live' && apiKey ? 'live' : 'sim', start: performance.now(), events: [], ts: Date.now() };
   $('#ask-btn').disabled = true; $('#ask-btn').textContent = t().thinking;
   $('#btn-skip').hidden = false;
   $('#minutes').classList.add('live');
@@ -266,7 +309,8 @@ async function ask(raw) {
   const qlang = isCJK(q) ? 'zh' : /[a-z]/i.test(q) ? 'en' : lang;
   const ctx = { lang: qlang, owner: OWNER, timeStr, asleep, apiKey, model: brain.model };
   try {
-    if (brain.mode === 'live' && apiKey) await play(llmMeeting(q, agents, ctx));
+    if (replayEvents) await play(replayEvents.map(({ t: _t, ...ev }) => ev).filter((ev) => !ev.from || byId(ev.from)));
+    else if (brain.mode === 'live' && apiKey) await play(llmMeeting(q, agents, ctx));
     else await play(simMeeting(q, agents, ctx));
   } catch (e) {
     renderer.setThinking([]);
@@ -274,6 +318,13 @@ async function ask(raw) {
     toast(t().fallback);
     await play(simMeeting(q, agents, ctx));
   } finally {
+    trace.end = performance.now();
+    if (!replayEvents) {
+      lastTrace = trace;
+      history_.push({ q, ts: trace.ts, winner: trace.winner || null });
+      history_ = history_.slice(-50); store.set('history', history_);
+    }
+    trace = null;
     busy = false; speed = 1;
     renderer.setThinking([]); renderer.setSpeaking(null); renderer.focusTarget = 0;
     setPhase(null);
@@ -285,15 +336,24 @@ async function ask(raw) {
 }
 
 // ── idle life ──
-let idleIdx = Math.floor(Math.random() * 20);
+let idleIdx = Math.floor(Math.random() * 20), beats = 2;
 function idleBeat() {
-  if (busy || !booted || document.hidden || !$('#answer').hidden) return;
+  if (busy || !booted || document.hidden || !$('#answer').hidden || renderer.stageId || labOpen || !card.hidden) return;
   if (asleep) {
     const d = byId('dreamer'); if (!d) return;
     const text = rand(DREAMS[lang]);
     renderer.burst('dreamer', rand(agents).id, 2, { color: d.color, size: 0.7, dur: 1.6 });
     say('dreamer', text, 3200); renderer.setSpeaking('dreamer');
     setTimeout(() => { if (!busy) { hush(); renderer.setSpeaking(null); } }, 3200);
+    return;
+  }
+  // every few beats, one voice steps out and shows its true form
+  if (++beats % 4 === 0 && !renderer.stageId && !document.querySelector('dialog[open]') && !labOpen) {
+    const a = rand(agents);
+    const text = `「${formName(a, lang)}」—— ${a.role[lang]}`;
+    renderer.materialize(a.id, 6200);
+    setTimeout(() => { if (busy || renderer.stageId !== a.id) return; say(a.id, text, 4200); renderer.setSpeaking(a.id); }, 1200);
+    setTimeout(() => { if (!busy && bubbleOwner === a.id) { hush(); renderer.setSpeaking(null); } }, 5600);
     return;
   }
   const imps = agents.filter((a) => !a.core);
@@ -322,7 +382,7 @@ $('#mind').addEventListener('click', (e) => {
   card.style.setProperty('--ac', a.color);
   card.querySelector('.ac-glyph').textContent = a.glyph;
   card.querySelector('.ac-name').textContent = nm(a) + (a.core ? '' : ` · ${STYLES[a.style].label[lang]}`);
-  card.querySelector('.ac-stats').textContent = t().stats(s.m, s.w);
+  card.querySelector('.ac-stats').textContent = `${t().formLabel}: ${formName(a, lang)} · ${t().stats(s.m, s.w)}`;
   card.querySelector('.ac-role').textContent = a.role[lang];
   const acts = card.querySelector('.ac-actions'); acts.innerHTML = '';
   if (!a.core) {
@@ -331,11 +391,115 @@ $('#mind').addEventListener('click', (e) => {
     acts.append(share, rm);
   }
   card.hidden = false;
-  const x = clamp(e.clientX + 16, 8, innerWidth - 276), y = clamp(e.clientY - 20, 8, innerHeight - 220);
-  card.style.left = x + 'px'; card.style.top = y + 'px';
+  // step the voice out into its creature form, and park the card beside it
+  if (!busy) { renderer.materialize(id); hush(); }
+  let x = e.clientX + 16, y = e.clientY - 20;
+  if (!busy && renderer.stageWorld) {
+    const st = renderer.toScreen(renderer.stageWorld());
+    const r = renderer.pxRadius(renderer.stageWorld(), 0.62);
+    x = st.x + r * 0.95; y = st.y - r * 0.6;
+    if (x + 320 > innerWidth) x = st.x - r * 0.95 - 320;
+  }
+  card.style.left = clamp(x, 8, innerWidth - 326) + 'px'; card.style.top = clamp(y, 8, innerHeight - 240) + 'px';
   renderer.flash(id, 1); renderer.wave(id);
 });
-document.addEventListener('pointerdown', (e) => { if (!card.contains(e.target) && e.target !== $('#mind')) card.hidden = true; });
+function hideCard() { if (card.hidden) return; card.hidden = true; if (!busy) renderer.release(); }
+document.addEventListener('pointerdown', (e) => { if (!card.contains(e.target) && e.target !== $('#mind')) hideCard(); });
+$('#mind').addEventListener('pointerdown', (e) => { if (!renderer.hitTest(e.clientX, e.clientY)) hideCard(); });
+
+// ── brain atlas ──
+let atlasOn = false, labOpen = null, routeTimer = null;
+const markers = $('#atlas-markers');
+for (const r of REGIONS) {
+  const b = el('button', 'marker'); b.type = 'button'; b.dataset.id = r.id; b.style.setProperty('--rc', r.color);
+  b.innerHTML = `<i></i><span></span>`;
+  b.onclick = () => openRegion(r);
+  markers.append(b);
+}
+function labelMarkers() {
+  markers.querySelectorAll('.marker').forEach((b) => {
+    const r = REGIONS.find((x) => x.id === b.dataset.id);
+    b.querySelector('span').textContent = `${r.lab} · ${r.name[lang]}`;
+    b.title = `${r.organ[lang]} · ${r.name[lang]}`;
+  });
+}
+(function trackMarkers() {
+  if (atlasOn && booted) {
+    markers.querySelectorAll('.marker').forEach((b) => {
+      const r = REGIONS.find((x) => x.id === b.dataset.id);
+      const s = renderer.project(r.pos);
+      b.style.transform = `translate(${s.x}px, ${s.y}px)`;
+      b.classList.toggle('back', !s.front);
+      b.classList.toggle('on', labOpen === r.id);
+    });
+  }
+  requestAnimationFrame(trackMarkers);
+})();
+function setAtlas(on) {
+  atlasOn = on;
+  document.body.classList.toggle('atlas', on);
+  $('#btn-atlas').classList.toggle('on', on);
+  if (!on) closeRegion();
+}
+function labCtx() {
+  return {
+    agents, history: history_, lastTrace, lastQuestion,
+    phaseName: (k) => t().phases[k] || k,
+    facts: [
+      ['GitHub', '@' + OWNER.handle],
+      [lang === 'zh' ? '城市' : 'City', OWNER.location[lang]],
+      [lang === 'zh' ? '机构' : 'Affiliation', OWNER.affiliation[lang]],
+      [lang === 'zh' ? '方向' : 'Focus', OWNER.focus[lang]],
+      ...(OWNER.email ? [['Email', OWNER.email]] : []),
+    ],
+    onForget() { history_ = []; store.set('history', []); refreshLab(); },
+    onReplay() { if (lastTrace && !busy) ask(lastTrace.q, lastTrace.events); },
+    onExport() {
+      if (!lastTrace) return;
+      const data = { question: lastTrace.q, mode: lastTrace.mode, startedAt: new Date(lastTrace.ts).toISOString(), durationMs: Math.round(lastTrace.end - lastTrace.start), events: lastTrace.events.map((e) => ({ ...e, t: Math.round(e.t - lastTrace.start) })) };
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+      a.download = `uplink-trace-${lastTrace.ts}.json`; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    },
+    onRoute(weights, k) {
+      clearTimeout(routeTimer);
+      routeTimer = setTimeout(() => {
+        const r = REGIONS.find((x) => x.id === 'router');
+        Object.entries(weights).sort((x, y) => y[1] - x[1]).slice(0, k).forEach(([id, w]) => {
+          const a = byId(id); if (a) renderer.burst(r.pos, id, Math.max(2, Math.round(w * 14)), { color: a.color, dur: 0.8, lift: 0.12, gap: 0.04, size: 0.6 + w });
+        });
+      }, 250);
+    },
+  };
+}
+function refreshLab() {
+  const r = REGIONS.find((x) => x.id === labOpen); if (!r) return;
+  const box = $('#lab-body');
+  box.innerHTML = renderLab(r, lang, labCtx());
+  bindLab(box, r, lang, labCtx());
+}
+function openRegion(r) {
+  if (busy) return;
+  if (!atlasOn) setAtlas(true);
+  labOpen = r.id;
+  hideCard(); hush();
+  renderer.focusOn(r.pos, r.color);
+  $('#lab').style.setProperty('--rc', r.color);
+  $('#lab').hidden = false;
+  document.body.classList.add('lab-open');
+  refreshLab();
+}
+function closeRegion() {
+  if (!labOpen) return;
+  labOpen = null;
+  renderer.focusOn(null);
+  $('#lab').hidden = true;
+  document.body.classList.remove('lab-open');
+}
+$('#btn-atlas').onclick = () => setAtlas(!atlasOn);
+$('#lab-close').onclick = closeRegion;
+addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeRegion(); hideCard(); } });
 
 // ── implants ──
 function addImplant(raw) {

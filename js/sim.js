@@ -284,3 +284,34 @@ export function simMeeting(question, agents, ctx) {
   ev.push({ type: 'answer', text: answer, winner, tally });
   return ev;
 }
+
+// ── Router: score every voice for a question and softmax the scores (top-k gating, like a mixture of experts) ──
+const AFFINITY = {
+  curious: /(why|how|what if|为什么|怎么|如果|原理|真的吗|\?|？)/gi,
+  skeptic: /(true|really|prove|evidence|risk|sure|真的|证据|风险|靠谱|确定|骗)/gi,
+  dreamer: /(dream|future|imagine|life|love|universe|梦|未来|想象|人生|爱|宇宙|意义)/gi,
+  builder: /(build|make|code|start|how do i|plan|做|写|实现|开始|创业|计划|项目|代码)/gi,
+  memory: /(you|your|who|contact|remember|你|谁|联系|记得|以前|经历|学校|研究)/gi,
+  jester: /(joke|fun|lol|haha|bored|笑话|好玩|哈哈|无聊|搞笑)/gi,
+};
+export function routeScores(question, agents, temperature = 0.7) {
+  const cat = classify(question);
+  const lead = LEAD[cat];
+  const rng = seeded('route|' + question);
+  const raw = {};
+  for (const a of agents) {
+    if (a.id === 'self') continue;
+    let s = 0.4 + rng() * 0.3;
+    const re = AFFINITY[a.id];
+    if (re) s += Math.min(3, (question.match(re) || []).length) * 0.55;
+    else s += 0.5; // implanted voices: a curious newcomer gets a fair share
+    if (a.id === lead) s += 1.6;
+    raw[a.id] = s;
+  }
+  const ids = Object.keys(raw);
+  const mx = Math.max(...ids.map((id) => raw[id]));
+  const ex = ids.map((id) => Math.exp((raw[id] - mx) / temperature));
+  const Z = ex.reduce((s, v) => s + v, 0);
+  const weights = Object.fromEntries(ids.map((id, i) => [id, ex[i] / Z]));
+  return { cat, lead, raw, weights };
+}
