@@ -1,4 +1,5 @@
 // The real brain: every voice is its own Claude call, run in parallel rounds.
+import { recallEvents } from './sim.js';
 // The visitor's API key stays in their own browser (localStorage) and is sent only to api.anthropic.com.
 
 const SDK_URL = 'https://esm.sh/@anthropic-ai/sdk@1.12.0';
@@ -78,6 +79,9 @@ export async function* llmMeeting(question, agents, ctx) {
 
   yield { type: 'phase', key: 'perceive' };
   yield { type: 'say', from: 'self', to: '*', text: zh ? `收到：「${short}」。接入真实模型，各位请独立思考。` : `Incoming: "${short}". Live model online — think independently, everyone.` };
+  for (const ev of recallEvents(ctx.recalled, lang, byId.memory)) yield ev;
+  // Only Memory gets the recalled episodes; the others think without them.
+  const recalledText = (ctx.recalled || []).map((r) => `- ${r.agoText}: "${r.q}"${r.winnerName ? ` (won by ${r.winnerName})` : ''}${r.a ? ` → the mind answered: "${r.a.slice(0, 160)}"` : ''}`).join('\n');
 
   // ── Round 1: every voice proposes, in parallel, without seeing the others.
   yield { type: 'phase', key: 'diverge' };
@@ -85,7 +89,7 @@ export async function* llmMeeting(question, agents, ctx) {
   const r1 = await Promise.allSettled(voices.map((a) => call(client, {
     model,
     system: systemFor(a, roster, owner),
-    user: `Visitor's question: """${q}"""\n\nGive your opening take as this voice.`,
+    user: `Visitor's question: """${q}"""\n\n${a.id === 'memory' && recalledText ? `Similar past meetings surfaced from your long-term memory:\n${recalledText}\n\n` : ''}Give your opening take as this voice.`,
     schema: { type: 'object', properties: { proposal: { type: 'string' } }, required: ['proposal'], additionalProperties: false },
   })));
   const firstErr = r1.find((r) => r.status === 'rejected');
@@ -131,7 +135,8 @@ export async function* llmMeeting(question, agents, ctx) {
   // ── Round 3: Self synthesises, honouring the vote.
   yield { type: 'phase', key: 'synth' };
   yield { type: 'thinking', ids: ['self'] };
-  const debate = voices.map((a) => `- ${a.name.en}: ${proposals[a.id]}`).join('\n');
+  // Self reads the meeting from working memory — exactly what's left after any compaction.
+  const debate = ctx.workingMemory?.() || voices.map((a) => `- ${a.name.en}: ${proposals[a.id]}`).join('\n');
   const tallyText = ranked.map(([id, n]) => `${byId[id].name.en}=${n}`).join(', ');
   let answer;
   try {
@@ -139,7 +144,7 @@ export async function* llmMeeting(question, agents, ctx) {
       model,
       maxTokens: 4000,
       system: systemFor(self, roster, owner).replace('under 45 words', 'under 90 words'),
-      user: `Visitor's question: """${q}"""\n\nThe meeting:\n${debate}\n\nVote tally: ${tallyText}. Winning voice: ${byId[winner].name.en}.\n\nNow answer the visitor directly, in first person as the whole mind, building mainly on the winning take while keeping anything true the others added.`,
+      user: `Visitor's question: """${q}"""\n\nYour working memory of the meeting (older lines may already be compressed into [summary] entries):\n${debate}\n\nVote tally: ${tallyText}. Winning voice: ${byId[winner].name.en}.\n\nNow answer the visitor directly, in first person as the whole mind, building mainly on the winning take while keeping anything true the others added.`,
       schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false },
     });
     answer = r3.answer || (r3.refused ? (zh ? '这个问题，我的大脑决定保持沉默。' : 'On this one, the mind chooses silence.') : r3.raw);
@@ -155,4 +160,17 @@ function errText(e, zh) {
   if (s === 429) return zh ? '请求太频繁（429），稍后再试。' : 'Rate limited (429). Try again shortly.';
   if (s === 400) return (zh ? '请求被拒绝：' : 'Request rejected: ') + (e?.error?.error?.message || e.message || '');
   return (zh ? '连接大脑失败：' : 'Could not reach the model: ') + (e?.message || String(e));
+}
+
+// Dreaming with a real model: distil a group of similar questions into one short insight.
+export async function summariseCluster(questions, lang, { apiKey, model }) {
+  const client = await getClient(apiKey);
+  const r = await call(client, {
+    model,
+    maxTokens: 2000,
+    system: 'You consolidate memories while the mind sleeps. Given questions visitors kept asking, write ONE short insight (max 24 words) about what people want to know and why. Write in ' + (lang === 'zh' ? 'Chinese' : 'English') + '. No markdown.',
+    user: questions.map((q) => `- ${q}`).join('\n'),
+    schema: { type: 'object', properties: { insight: { type: 'string' } }, required: ['insight'], additionalProperties: false },
+  });
+  return r.insight || null;
 }

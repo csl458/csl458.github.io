@@ -111,7 +111,9 @@ export class MindRenderer {
     this.labelLayer.append(this.stageLabel);
     this.zs = [];
 
+    this.crystals = new Map();
     this.buildHead(); this.buildDust(); this.buildStars(); this.buildPulses(); this.buildSynapses(); this.buildWaves();
+    this.cdots = this.makeDots(120); this.world.add(this.cdots.pts);
 
     this.composer = new EffectComposer(this.gl);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -283,7 +285,7 @@ export class MindRenderer {
 
   posOf(id) {
     const a = this.agents.get(id);
-    if (!a) return ANCHORS[id] || [0, 0.3, 0];
+    if (!a) { const c = this.crystals.get(id); if (c) return c.pos; return ANCHORS[id] || [0, 0.3, 0]; }
     const b = Math.sin(this.t * 0.9 + a.ph) * 0.018;
     return [a.pos[0], a.pos[1] + b, a.pos[2]];
   }
@@ -312,6 +314,33 @@ export class MindRenderer {
     }
     const v = this.toWorld(this.posOf(id)), s = this.toScreen(v);
     return { x: s.x, y: s.y, r: this.pxRadius(v, 0.06) };
+  }
+  // Long-term memories orbit the head as crystals. list: [{ id, color, retention, insight }]
+  setCrystals(list) {
+    const keep = new Set(list.map((c) => c.id));
+    for (const [id, c] of this.crystals) if (!keep.has(id)) { this.world.remove(c.mesh); c.mesh.geometry.dispose(); c.mesh.material.dispose(); this.crystals.delete(id); }
+    list.forEach((c, i) => {
+      let s = this.crystals.get(c.id);
+      if (!s) {
+        const geo = new THREE.EdgesGeometry(c.insight ? new THREE.IcosahedronGeometry(0.055, 0) : new THREE.OctahedronGeometry(0.036, 0));
+        const mesh = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: c.color, ...additive, opacity: 0 }));
+        mesh.frustumCulled = false; this.world.add(mesh);
+        s = { mesh, pos: [0, 0, 0], glow: 0, born: 0, spin: Math.random() * TAU };
+        this.crystals.set(c.id, s);
+      }
+      Object.assign(s, c, { order: i, total: list.length });
+      s.mesh.material.color.set(c.color);
+    });
+  }
+  flashCrystal(id, k = 1) { const c = this.crystals.get(id); if (c) c.glow = Math.min(2, c.glow + k); }
+  crystalAt(x, y) {
+    let best = null, bd = 22;
+    for (const [id, c] of this.crystals) {
+      if (c.retention < 0.04 && !c.insight) continue;
+      const s = this.toScreen(this.toWorld(c.pos)), d = Math.hypot(s.x - x, s.y - y);
+      if (d < bd) { bd = d; best = id; }
+    }
+    return best;
   }
   hitTest(x, y) {
     let best = null, bd = 1e9;
@@ -486,6 +515,40 @@ export class MindRenderer {
     }
     this.synG.setDrawRange(0, si * 2);
     this.synG.attributes.position.needsUpdate = true; this.synG.attributes.color.needsUpdate = true;
+
+    // memory crystals: episodes on an inner tilted orbit, insights (from dreams) on an outer one
+    {
+      const C = this.cdots; let ci = 0;
+      const eps = [...this.crystals.values()].filter((c) => !c.insight), ins = [...this.crystals.values()].filter((c) => c.insight);
+      const place = (c, k, n, R, y0, tilt, speed) => {
+        const a = (k / Math.max(1, n)) * TAU + t * speed;
+        const x = Math.cos(a) * R, z = Math.sin(a) * R;
+        c.pos = [x, y0 + Math.sin(a) * tilt + Math.sin(t * 0.7 + k) * 0.02, z - 0.05];
+      };
+      eps.forEach((c, k) => place(c, k, eps.length, 1.18, 0.12, 0.28, 0.06));
+      ins.forEach((c, k) => place(c, k, ins.length, 1.5, 0.45, 0.18, -0.035));
+      for (const c of this.crystals.values()) {
+        c.born = Math.min(1, c.born + dt / 1.4);
+        c.glow *= Math.exp(-dt * 1.2);
+        const vis = c.insight ? 1 : clamp((c.retention - 0.04) / 0.3, 0, 1) * 0.7 + 0.3 * Math.min(1, c.retention / 0.04);
+        const op = (0.18 + 0.75 * vis + 0.6 * c.glow) * ease(c.born) * clamp((this.assemble - 0.6) / 0.4, 0, 1);
+        c.mesh.position.set(...c.pos);
+        c.mesh.rotation.set(t * 0.6 + c.spin, t * 0.9 + c.spin, 0);
+        c.mesh.scale.setScalar((0.6 + 0.4 * ease(c.born)) * (1 + 0.6 * c.glow));
+        c.mesh.material.opacity = Math.min(1, op);
+        if (ci < C.n) {
+          C.P.set(c.pos, ci * 3);
+          const col = c.mesh.material.color;
+          C.C.set([col.r, col.g, col.b], ci * 3);
+          C.S[ci] = (c.insight ? 0.09 : 0.05) * (1 + 1.2 * c.glow);
+          C.A[ci] = Math.min(1, op * 0.8);
+          ci++;
+        }
+      }
+      C.g.setDrawRange(0, ci);
+      for (const n of ['position', 'aColor', 'aSize', 'aAlpha']) C.g.attributes[n].needsUpdate = true;
+      C.m.uniforms.uScale.value = this.pxScale;
+    }
 
     // shock waves
     for (const w of this.wavePool) {

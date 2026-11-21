@@ -1,5 +1,6 @@
 // The brain atlas: each region of the head is one mechanism of a multi-agent system, with a lab panel.
 import { routeScores } from './sim.js';
+import { renderMemoryLab, bindMemoryLab } from './memory-lab.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -12,7 +13,7 @@ export const REGIONS = [
   {
     id: 'memory', pos: [0.4, -0.08, -0.08], color: '#ffc24a', lab: '03', status: 'live',
     organ: { zh: '海马体', en: 'Hippocampus' }, name: { zh: '记忆', en: 'Memory' },
-    lead: { zh: '三层记忆：工作记忆是当前会议的上下文；情景记忆是每一场过去的会议；语义记忆是关于主人的事实。', en: 'Three layers: working memory is the current meeting\'s context; episodic memory is every past meeting; semantic memory is the facts about the owner.' },
+    lead: { zh: '大脑怎么记住、想起、遗忘和整理：向量检索唤起相似的过去，遗忘曲线让旧记忆褪色，工作记忆在超出预算时压缩，深夜做梦把重复的记忆提炼成洞见。', en: 'How the mind remembers, recalls, forgets and consolidates: vector search brings back similar pasts, a forgetting curve fades old memories, working memory compacts when it runs over budget, and dreams distil repeats into insights.' },
   },
   {
     id: 'orchestration', pos: [0, 0.52, 0.55], color: '#5dffa0', lab: '04', status: 'live',
@@ -70,14 +71,7 @@ export function renderLab(region, lang, ctx) {
       <label>${t.topk} <output id="rt-kv">3</output><input type="range" id="rt-k" min="1" max="${Math.max(1, ctx.agents.length - 1)}" step="1" value="3"></label></div>
       <div class="lab-meta" id="rt-meta"></div><div class="weights" id="rt-w"></div>`;
   } else if (region.id === 'memory') {
-    const facts = ctx.facts.map((f) => `<li><span>${esc(f[0])}</span>${esc(f[1])}</li>`).join('');
-    const eps = ctx.history.slice(-8).reverse().map((h) => {
-      const w = ctx.agents.find((a) => a.id === h.winner);
-      return `<li><span>${ago(h.ts, lang)}</span>${esc(h.q)}${w ? ` <em style="color:${w.color}">→ ${esc(w.name[lang])}</em>` : ''}</li>`;
-    }).join('');
-    body = `<h3>${t.facts}</h3><ul class="facts">${facts}</ul>
-      <h3>${t.episodes} · ${ctx.history.length}</h3>${eps ? `<ul class="eps">${eps}</ul>` : `<p class="muted">${t.none}</p>`}
-      ${ctx.history.length ? `<button class="ghost tiny" id="mem-forget">${t.forget}</button>` : ''}`;
+    body = renderMemoryLab(lang, ctx);
   } else if (region.id === 'orchestration') {
     const tr = ctx.lastTrace;
     const order = ['perceive', 'diverge', 'clash', 'vote', 'synth'];
@@ -129,7 +123,7 @@ export function bindLab(root, region, lang, ctx) {
     q.addEventListener('input', draw); tS.addEventListener('input', draw); kS.addEventListener('input', draw);
     draw();
   }
-  root.querySelector('#mem-forget')?.addEventListener('click', () => ctx.onForget?.());
+  if (region.id === 'memory') bindMemoryLab(root, lang, ctx);
   root.querySelector('#tr-replay')?.addEventListener('click', () => ctx.onReplay?.());
   root.querySelector('#tr-export')?.addEventListener('click', () => ctx.onExport?.());
 }

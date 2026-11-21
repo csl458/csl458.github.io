@@ -206,6 +206,7 @@ export function simMeeting(question, agents, ctx) {
   ev.push({ type: 'say', from: 'self', to: '*', text: pick(rng, lang === 'zh'
     ? [`收到一个问题：「${short}」。各位，开会。`, `新输入：「${short}」。全员就位。`, `有人问：「${short}」。谁先说？`]
     : [`Incoming: "${short}". Everyone, meeting time.`, `New input: "${short}". All voices to the table.`, `Someone asks: "${short}". Who\'s first?`]) });
+  ev.push(...recallEvents(ctx.recalled, lang, byId.memory));
 
   // ── diverge
   ev.push({ type: 'phase', key: 'diverge' });
@@ -314,4 +315,17 @@ export function routeScores(question, agents, temperature = 0.7) {
   const Z = ex.reduce((s, v) => s + v, 0);
   const weights = Object.fromEntries(ids.map((id, i) => [id, ex[i] / Z]));
   return { cat, lead, raw, weights };
+}
+
+// ── Recall: when long-term memory surfaces similar past meetings, Memory says so before the debate.
+// recalled: [{ id, q, agoText, winnerName, score }]
+export function recallEvents(recalled, lang, memoryAgent) {
+  if (!recalled?.length || !memoryAgent) return [];
+  const r = recalled[0];
+  const q = r.q.length > 20 ? r.q.slice(0, 19) + '…' : r.q;
+  const more = recalled.length - 1;
+  const text = lang === 'zh'
+    ? `等等，这个我有印象：${r.agoText}有人问过「${q}」${r.winnerName ? `，那次是「${r.winnerName}」胜出` : ''}${more ? `。另外还有 ${more} 段相似的记忆` : ''}。相似度 ${(r.score * 100).toFixed(0)}%。`
+    : `Wait, this rings a bell: ${r.agoText} someone asked "${q}"${r.winnerName ? ` and ${r.winnerName} won` : ''}${more ? `. ${more} more similar memor${more > 1 ? 'ies' : 'y'} surfaced too` : ''}. Similarity ${(r.score * 100).toFixed(0)}%.`;
+  return [{ type: 'recall', ids: recalled.map((x) => x.id) }, { type: 'say', from: 'memory', to: 'self', text, kind: 'recall' }];
 }

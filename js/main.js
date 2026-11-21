@@ -2,9 +2,10 @@ import { OWNER } from './config.js';
 import { T } from './i18n.js';
 import { CORE, STYLES, PALETTE, GLYPHS, corePosition, implantPosition, implantToAgent, sanitizeImplant, encodeAgent, decodeAgent } from './agents.js';
 import { simMeeting, isCJK, IDLE, DREAMS } from './sim.js';
-import { llmMeeting, MODELS } from './llm.js';
+import { llmMeeting, MODELS, summariseCluster } from './llm.js';
 import { REGIONS, renderLab, bindLab } from './atlas.js';
 import { formName } from './forms.js';
+import { MemoryStore, WorkingMemory, ago } from './memory.js';
 
 // WebGL renderer when the browser can do it (and three.js loads); the canvas renderer otherwise.
 let MindRenderer;
@@ -55,11 +56,38 @@ window.__mind = renderer; // handy for poking at it from devtools
 if (!renderer.materialize) {
   Object.assign(renderer, {
     materialize() {}, release() {}, isStaged: () => false, focusOn() {}, stageWorld: null,
+    setCrystals() {}, flashCrystal() {}, crystalAt: () => null,
     project(p) { const q = this.proj?.(p); return q ? { x: q.x, y: q.y, front: q.z > -0.2 } : { x: -999, y: -999, front: false }; },
   });
 }
-let history_ = store.get('history', []) || [];
 let lastTrace = null, trace = null, lastQuestion = '';
+
+// ── memory: long-term store + the current meeting's working memory ──
+const memory = new MemoryStore(() => store.get('memory', null), (d) => store.set('memory', d));
+{ // carry over the plain history list kept by the previous version
+  const old = store.get('history', null);
+  if (old?.length && !memory.episodes.length) {
+    for (const h of old.slice(-20)) { const e = memory.add({ q: h.q, a: '', winner: h.winner, lang: isCJK(h.q) ? 'zh' : 'en' }); e.ts = e.seen = h.ts || Date.now(); }
+    memory.save();
+  }
+  try { localStorage.removeItem('som.history'); } catch {}
+}
+const wm = new WorkingMemory();
+let wmLast = store.get('wm', null), meetingLang = 'en', labFocus = null;
+function syncCrystals() {
+  renderer.setCrystals([
+    ...memory.episodes.map((e) => ({ id: e.id, color: agents.find((a) => a.id === e.winner)?.color || '#ffc24a', retention: memory.retention(e) })),
+    ...memory.insights.map((i) => ({ id: i.id, color: '#ffd98a', retention: 1, insight: true })),
+  ]);
+}
+function updateCtxBar(flash) {
+  const tot = wm.total(), f = tot / wm.budget;
+  const bar = $('#ctxbar');
+  bar.querySelector('i').style.width = Math.min(100, f * 100) + '%';
+  bar.classList.toggle('hot', f > 0.85);
+  $('#ctxnum').textContent = `${tot}/${wm.budget}`;
+  if (flash) { bar.classList.remove('compact'); void bar.offsetWidth; bar.classList.add('compact'); }
+}
 function buildAgents(bornId) {
   agents = [
     ...CORE.map((a, i) => ({ ...a, pos: corePosition(i) })),
@@ -83,6 +111,8 @@ function tick() {
   renderer.sleepTarget = asleep && !busy ? 1 : 0;
   $('#clock').textContent = timeStr;
   $('#sleepstate').textContent = asleep ? t().asleep : t().awake;
+  // night consolidation: Sydney is asleep and there's enough new experience to sort through
+  if (booted && asleep && !busy && !dreaming && memory.newSinceDream() >= 3 && Date.now() - memory.lastDream > 30 * 60e3) runDream(true);
 }
 
 // ── language ──
@@ -204,6 +234,18 @@ async function handle(ev) {
     case 'thinking':
       renderer.setThinking(ev.ids);
       break;
+    case 'recall': {
+      // similar past meetings light up on their orbit and stream into Memory
+      const mem = byId('memory');
+      for (const id of ev.ids) {
+        renderer.flashCrystal(id, 1.6);
+        renderer.burst(id, 'memory', 6, { color: '#ffc24a', dur: 1.0, lift: 0.15, gap: 0.05 });
+      }
+      push(el('div', 'sysrow mem', `◷ ${esc(t().recalled(ev.ids.length))}`));
+      if (mem) renderer.flash('memory', 1);
+      await wait(1100);
+      break;
+    }
     case 'say': {
       const a = byId(ev.from); if (!a) break;
       const thinkingNow = agents.filter((x) => renderer.agents.get(x.id)?.thinking && x.id !== ev.from).map((x) => x.id);
@@ -212,6 +254,11 @@ async function handle(ev) {
       renderer.flash(ev.from, 0.8);
       bump(ev.from, 'm');
       logLine(a, ev.text, ev);
+      { // every line spends working memory; past the budget the oldest lines get folded into a summary
+        const c = wm.push(ev.from, a.name[meetingLang], ev.text, meetingLang);
+        updateCtxBar(!!c);
+        if (c) push(el('div', 'sysrow wmc', `⟲ ${esc(t().compacted(c.n))}<small>${esc(c.summary)}</small>`));
+      }
       const ms = clamp(700 + [...ev.text].length * (isCJK(ev.text) ? 70 : 32), 1500, 4600);
       say(ev.from, ev.text, ms);
       if (ev.to === '*') for (const o of agents) { if (o.id !== ev.from) renderer.burst(ev.from, o.id, 2, { color: a.color, delay: 0.2, size: 0.8 }); }
@@ -236,6 +283,7 @@ async function handle(ev) {
       const total = Object.values(tally).reduce((s, n) => s + n, 0);
       const top = Math.max(0, ...Object.values(tally));
       $('#consensus').textContent = total ? Math.round((top / total) * 100) + '%' : '—';
+      if (trace) trace.answer = ev.text;
       if (ev.winner) {
         bump(ev.winner, 'w'); renderTally(tally);
         if (trace) trace.winner = ev.winner;
@@ -307,7 +355,14 @@ async function ask(raw, replayEvents) {
   renderer.wave('self', '#4ff0ff');
 
   const qlang = isCJK(q) ? 'zh' : /[a-z]/i.test(q) ? 'en' : lang;
-  const ctx = { lang: qlang, owner: OWNER, timeStr, asleep, apiKey, model: brain.model };
+  meetingLang = qlang;
+  wm.reset(q); updateCtxBar();
+  // long-term recall: similar, not-yet-forgotten meetings surface (and get stronger for it)
+  const recalled = replayEvents ? [] : memory.recall(q).map((h) => ({
+    id: h.e.id, q: h.e.q, a: h.e.a, score: h.score, agoText: ago(h.e.ts, qlang),
+    winnerName: agents.find((x) => x.id === h.e.winner)?.name[qlang] || '',
+  }));
+  const ctx = { lang: qlang, owner: OWNER, timeStr, asleep, apiKey, model: brain.model, recalled, workingMemory: () => wm.toText() };
   try {
     if (replayEvents) await play(replayEvents.map(({ t: _t, ...ev }) => ev).filter((ev) => !ev.from || byId(ev.from)));
     else if (brain.mode === 'live' && apiKey) await play(llmMeeting(q, agents, ctx));
@@ -319,10 +374,17 @@ async function ask(raw, replayEvents) {
     await play(simMeeting(q, agents, ctx));
   } finally {
     trace.end = performance.now();
+    wmLast = wm.snapshot(); if (!replayEvents) store.set('wm', wmLast);
     if (!replayEvents) {
       lastTrace = trace;
-      history_.push({ q, ts: trace.ts, winner: trace.winner || null });
-      history_ = history_.slice(-50); store.set('history', history_);
+      if (trace.answer) {
+        // the meeting crystallises into a long-term memory that joins the orbit
+        const e = memory.add({ q, a: trace.answer, winner: trace.winner || null, lang: qlang });
+        syncCrystals();
+        renderer.burst('self', e.id, 10, { color: byId(trace.winner)?.color || '#ffc24a', dur: 1.1, lift: 0.35, gap: 0.04, size: 1.1 });
+        setTimeout(() => renderer.flashCrystal(e.id, 1.8), 1100);
+        push(el('div', 'sysrow mem', `◆ ${esc(t().crystallized)}`));
+      }
     }
     trace = null;
     busy = false; speed = 1;
@@ -376,6 +438,14 @@ setInterval(idleBeat, 7200);
 // ── agent card ──
 const card = $('#agent-card');
 $('#mind').addEventListener('click', (e) => {
+  // a memory crystal: open the Memory lab on that episode
+  const cid = !renderer.hitTest(e.clientX, e.clientY) && renderer.crystalAt(e.clientX, e.clientY);
+  if (cid && !busy) {
+    labFocus = cid;
+    renderer.flashCrystal(cid, 1.5);
+    openRegion(REGIONS.find((r) => r.id === 'memory'));
+    return;
+  }
   const id = renderer.hitTest(e.clientX, e.clientY);
   if (!id) { card.hidden = true; return; }
   const a = byId(id); const s = stats.agents[id] || { m: 0, w: 0 };
@@ -443,7 +513,9 @@ function setAtlas(on) {
 }
 function labCtx() {
   return {
-    agents, history: history_, lastTrace, lastQuestion,
+    agents, lastTrace, lastQuestion, memory, wmLast, focusId: labFocus, handle: '@' + OWNER.handle,
+    onRecallPreview(ids) { for (const id of ids) renderer.flashCrystal(id, 1.3); },
+    onDream() { runDream(false); },
     phaseName: (k) => t().phases[k] || k,
     facts: [
       ['GitHub', '@' + OWNER.handle],
@@ -452,7 +524,7 @@ function labCtx() {
       [lang === 'zh' ? '方向' : 'Focus', OWNER.focus[lang]],
       ...(OWNER.email ? [['Email', OWNER.email]] : []),
     ],
-    onForget() { history_ = []; store.set('history', []); refreshLab(); },
+    onForget() { memory.forget(); syncCrystals(); refreshLab(); },
     onReplay() { if (lastTrace && !busy) ask(lastTrace.q, lastTrace.events); },
     onExport() {
       if (!lastTrace) return;
@@ -479,6 +551,33 @@ function refreshLab() {
   box.innerHTML = renderLab(r, lang, labCtx());
   bindLab(box, r, lang, labCtx());
 }
+// ── dreaming: cluster similar memories, distil each cluster into an insight ──
+let dreaming = false;
+async function runDream(auto) {
+  if (dreaming || busy) return;
+  dreaming = true;
+  const live = brain.mode === 'live' && apiKey;
+  const groupsPreview = memory.clusters();
+  // every memory that's about to be consolidated drifts into Memory first
+  groupsPreview.flat().forEach((e, i) => setTimeout(() => {
+    renderer.flashCrystal(e.id, 1.4);
+    renderer.burst(e.id, 'memory', 4, { color: '#ffd98a', dur: 1.2, lift: 0.2, gap: 0.06 });
+  }, i * 140));
+  if (groupsPreview.length && !labOpen) renderer.materialize('memory', 4200);
+  const res = await memory.dream(lang, live ? (qs, l) => summariseCluster(qs, l, { apiKey, model: brain.model }) : null);
+  await new Promise((r) => setTimeout(r, 400 + groupsPreview.flat().length * 140));
+  syncCrystals();
+  for (const ins of res.insights) setTimeout(() => { renderer.burst('memory', ins.id, 10, { color: '#ffd98a', dur: 1.1, lift: 0.3, gap: 0.04 }); renderer.flashCrystal(ins.id, 2); }, 300);
+  const mem = byId('memory');
+  if (res.insights.length) {
+    push(el('div', 'sysrow dream', `☾ ${esc(t().dreamDone(res.insights.length, auto))}`));
+    for (const ins of res.insights) if (mem) logLine(mem, ins.text, { idle: auto });
+  } else push(el('div', 'sysrow dream', `☾ ${esc(t().dreamNone)}`));
+  toast(res.insights.length ? t().dreamDone(res.insights.length, auto) : t().dreamNone);
+  dreaming = false;
+  refreshLab();
+}
+
 function openRegion(r) {
   if (busy) return;
   if (!atlasOn) setAtlas(true);
@@ -492,7 +591,7 @@ function openRegion(r) {
 }
 function closeRegion() {
   if (!labOpen) return;
-  labOpen = null;
+  labOpen = null; labFocus = null;
   renderer.focusOn(null);
   $('#lab').hidden = true;
   document.body.classList.remove('lab-open');
@@ -629,6 +728,8 @@ if (innerWidth <= 960) $('#minutes').classList.add('collapsed');
 // ── boot ──
 async function boot() {
   buildAgents();
+  syncCrystals();
+  setInterval(syncCrystals, 60e3); // retention keeps decaying while the page is open
   applyLang();
   $('#nthoughts').textContent = stats.thoughts.toLocaleString();
   setInterval(tick, 15000);
