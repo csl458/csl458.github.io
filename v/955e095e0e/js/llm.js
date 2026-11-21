@@ -1,5 +1,6 @@
 // The real brain: every voice is its own Claude call, run in parallel rounds.
 import { recallEvents } from './sim.js';
+import { TOOLS, TOOL_BY_NAME, executeTool } from './tools.js';
 // The visitor's API key stays in their own browser (localStorage) and is sent only to api.anthropic.com.
 
 const SDK_URL = 'https://esm.sh/@anthropic-ai/sdk@1.12.0';
@@ -89,7 +90,7 @@ export async function* llmMeeting(question, agents, ctx) {
   const r1 = await Promise.allSettled(voices.map((a) => call(client, {
     model,
     system: systemFor(a, roster, owner),
-    user: `Visitor's question: """${q}"""\n\n${a.id === 'memory' && recalledText ? `Similar past meetings surfaced from your long-term memory:\n${recalledText}\n\n` : ''}Give your opening take as this voice.`,
+    user: `Visitor's question: """${q}"""\n\n${a.id === 'memory' && recalledText ? `Similar past meetings surfaced from your long-term memory:\n${recalledText}\n\n` : ''}${toolFacts(ctx)}Give your opening take as this voice.`,
     schema: { type: 'object', properties: { proposal: { type: 'string' } }, required: ['proposal'], additionalProperties: false },
   })));
   const firstErr = r1.find((r) => r.status === 'rejected');
@@ -144,7 +145,7 @@ export async function* llmMeeting(question, agents, ctx) {
       model,
       maxTokens: 4000,
       system: systemFor(self, roster, owner).replace('under 45 words', 'under 90 words'),
-      user: `Visitor's question: """${q}"""\n\nYour working memory of the meeting (older lines may already be compressed into [summary] entries):\n${debate}\n\nVote tally: ${tallyText}. Winning voice: ${byId[winner].name.en}.\n\nNow answer the visitor directly, in first person as the whole mind, building mainly on the winning take while keeping anything true the others added.`,
+      user: `Visitor's question: """${q}"""\n\n${toolFacts(ctx)}Your working memory of the meeting (older lines may already be compressed into [summary] entries):\n${debate}\n\nVote tally: ${tallyText}. Winning voice: ${byId[winner].name.en}.\n\nNow answer the visitor directly, in first person as the whole mind, building mainly on the winning take while keeping anything true the others added.`,
       schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false },
     });
     answer = r3.answer || (r3.refused ? (zh ? '这个问题，我的大脑决定保持沉默。' : 'On this one, the mind chooses silence.') : r3.raw);
@@ -206,7 +207,7 @@ export async function makeLLMBrain(question, agents, ctx, weights) {
       else if (mode === 'rebut') task = `Debate. Your opponent (${info.opponent.name.en}) just said:\n"${info.opponentText}"\n\nRebut it directly.`;
       else if (mode === 'post') task = info.board ? `There is a shared blackboard. Everything posted so far:\n${info.board}\n\nAdd ONE new post that is not already on the board.` : 'There is a shared blackboard with only the question on it. Post your first contribution.';
       else task = 'Give your take as this voice.';
-      const r = await one(a, `Visitor's question: """${q}"""\n\n${mem}${task}`);
+      const r = await one(a, `Visitor's question: """${q}"""\n\n${mem}${toolFacts(ctx)}${task}`);
       return r.text || (zh ? '（这个念头被拦截了）' : '(this thought was withheld)');
     },
     async plan(voices) {
@@ -231,10 +232,61 @@ export async function makeLLMBrain(question, agents, ctx, weights) {
       const r = await guard(call(client, {
         model, maxTokens: 4000,
         system: systemFor(self, roster, owner).replace('under 45 words', 'under 90 words'),
-        user: `Visitor's question: """${q}"""\n\nYour working memory of the meeting (older lines may be compressed into [summary] entries):\n${context}\n\nThe strongest contribution came from ${winnerName}. Now answer the visitor directly, in first person as the whole mind, building mainly on it while keeping anything true the others added.`,
+        user: `Visitor's question: """${q}"""\n\n${toolFacts(ctx)}Your working memory of the meeting (older lines may be compressed into [summary] entries):\n${context}\n\nThe strongest contribution came from ${winnerName}. Now answer the visitor directly, in first person as the whole mind, building mainly on it while keeping anything true the others added.`,
         schema: { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false },
       }));
       return r.answer || (r.refused ? (zh ? '这个问题，我的大脑决定保持沉默。' : 'On this one, the mind chooses silence.') : r.raw);
     },
   };
+}
+
+
+// Facts gathered with tools before the meeting, shared with every voice.
+function toolFacts(ctx) {
+  const ok = (ctx.toolResults || []).filter((r) => r.ok);
+  if (!ok.length) return '';
+  return `Facts gathered with tools before the meeting (real, live data — rely on them):\n${ok.map((r) => `- ${r.name}: ${r.summary}`).join('\n')}\n\n`;
+}
+
+// The tool phase with a real model: Claude decides whether to call tools and with what input, in a
+// standard tool-use loop (call → run locally → return tool_result → continue), up to 4 rounds.
+export async function* claudeToolPhase(question, agents, ctx) {
+  const { lang, owner, apiKey, model } = ctx;
+  const client = await getClient(apiKey);
+  const self = agents.find((a) => a.id === 'self');
+  const roster = agents.map((a) => `${a.id} ("${a.name.en}")`).join(', ');
+  const tools = TOOLS.map((t) => t.def);
+  const system = systemFor(self, roster, owner) + `\n\nRight now you are gathering facts BEFORE the meeting. Call tools only if live data would materially improve the answer (the owner's GitHub activity, a factual lookup, the weather, arithmetic, the time somewhere). If no tool would help, reply "no tools needed" and call none. When you have what you need, reply with one short sentence summarising what you found.`;
+  const messages = [{ role: 'user', content: `Visitor's question: """${question.slice(0, 600)}"""` }];
+  ctx.toolResults = ctx.toolResults || [];
+  let announced = false;
+  for (let round = 0; round < 4; round++) {
+    const params = { model, max_tokens: 4000, system, messages, tools, output_config: { effort: 'low' } };
+    let res;
+    try {
+      res = HAS_FALLBACKS.has(model)
+        ? await client.beta.messages.create({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' })
+        : await client.messages.create(params);
+    } catch (e) { throw new LLMError(errText(e, lang === 'zh')); }
+    if (res.stop_reason === 'refusal') return;
+    const calls = res.content.filter((b) => b.type === 'tool_use');
+    if (res.stop_reason !== 'tool_use' || !calls.length) return;
+    if (!announced) { yield { type: 'phase', key: 'tools' }; announced = true; }
+    const results = await Promise.all(calls.map(async (c) => {
+      const t = TOOL_BY_NAME[c.name];
+      if (!t) return { c, t: null, r: { ok: false, summary: 'unknown tool', data: { error: 'unknown tool' } } };
+      return { c, t, r: await executeTool(t.id, c.input, { lang, owner }, 'claude') };
+    }));
+    for (const { c, t, r } of results) {
+      if (!t) continue;
+      const from = agents.some((a) => a.id === t.owner) ? t.owner : 'self';
+      yield { type: 'tool_call', from, tool: t.id, input: c.input };
+      yield { type: 'tool_result', from, tool: t.id, ok: r.ok, summary: r.summary, ms: r.ms };
+      yield { type: 'say', from, to: 'self', kind: 'tool', text: r.ok ? (lang === 'zh' ? `我查了「${t.name.zh}」：${r.summary}` : `I checked ${t.name.en}: ${r.summary}`) : (lang === 'zh' ? `「${t.name.zh}」没回应（${r.summary}）。` : `${t.name.en} didn't answer (${r.summary}).`) };
+      ctx.toolResults.push({ tool: t.id, name: t.def.name, input: c.input, ...r });
+    }
+    // the whole assistant turn goes back unchanged (thinking, tool_use and any fallback blocks), then all results in one user turn
+    messages.push({ role: 'assistant', content: res.content });
+    messages.push({ role: 'user', content: results.map(({ c, r }) => ({ type: 'tool_result', tool_use_id: c.id, content: JSON.stringify(r.ok ? r.data : { error: r.summary }).slice(0, 4000), is_error: !r.ok })) });
+  }
 }

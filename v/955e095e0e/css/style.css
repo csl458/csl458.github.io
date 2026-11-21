@@ -389,3 +389,44 @@ details.wm li.pin { color: var(--cyan); }
 .abcol p { margin: 0; font-size: 12.5px; line-height: 1.5; color: #c7dcf2; }
 .abcol p em { display: block; font: 10px var(--mono); font-style: normal; color: var(--dim); text-transform: uppercase; letter-spacing: .15em; margin-bottom: 2px; }
 @media (max-width: 520px) { .tcards, .abgrid { grid-template-columns: 1fr; } .tcard:last-child:nth-child(odd) { grid-column: auto; } .mstats.six { grid-template-columns: repeat(3, 1fr); } }
+
+/* ── tool chips next to the satellites ── */
+.toolchip { position: fixed; left: 0; top: 0; z-index: 6; pointer-events: none; display: flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px;
+  background: rgba(6, 14, 28, 0.88); border: 1px solid var(--tc); box-shadow: 0 0 18px -6px var(--tc); font: 600 12px var(--mono); color: var(--ink); white-space: nowrap; transition: opacity .3s; }
+.toolchip[hidden] { display: none; }
+.toolchip b { color: var(--tc); }
+.toolchip small { color: var(--dim); font-weight: 400; }
+.toolchip.fail { border-color: #ff5470; }
+.toolchip .spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--tc); border-right-color: transparent; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.log .sysrow.tool { color: #ffd0a8; background: rgba(255, 155, 74, 0.06); border: 1px solid rgba(255, 155, 74, 0.28); }
+.log .sysrow.tool.bad { color: #ff9aa9; border-color: rgba(255, 84, 112, 0.35); }
+.log .sysrow.tool code { font: 11.5px var(--mono); color: #ffd0a8; word-break: break-all; }
+
+/* ── tools lab ── */
+.toolcards { display: flex; flex-direction: column; gap: 10px; }
+.toolcard { padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(120, 200, 255, 0.03); transition: border-color .2s, box-shadow .2s; }
+.toolcard:hover, .toolcard.focus { border-color: var(--tc); box-shadow: 0 0 18px -8px var(--tc); }
+.toolcard .th { display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; }
+.toolcard .th > b { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; color: #06101f; background: var(--tc); box-shadow: 0 0 14px -2px var(--tc); }
+.toolcard strong { display: block; font-size: 15px; }
+.toolcard code { font: 11px var(--mono); color: var(--dim); }
+.toolcard .own { font: 11px var(--mono); }
+.toolcard > p { margin: 8px 0 6px; font-size: 13px; line-height: 1.55; color: #c7dcf2; }
+.toolcard details summary, .tout details summary { cursor: pointer; font: 11px var(--mono); color: var(--dim); }
+.toolcard pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); font: 11px/1.5 var(--mono); color: #b9d4ee; overflow: auto; max-height: 220px; white-space: pre-wrap; word-break: break-word; }
+.tryrow { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; }
+.tryrow .lab-input { font: 12px var(--mono); padding: 8px 10px; }
+.tout p { margin: 8px 0 4px; font-size: 13px; line-height: 1.5; }
+.tout p.ok { color: #c9ffe0; }
+.tout p.err, .tout .err { color: #ff9aa9; }
+.tout small { color: var(--dim); font: 11px var(--mono); }
+.tplan { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 4px; font: 12px var(--mono); color: var(--dim); }
+.tplan code { padding: 4px 9px; border-radius: 8px; border: 1px solid var(--tc); color: var(--ink); background: color-mix(in srgb, var(--tc) 10%, transparent); word-break: break-all; }
+.tlog { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tlog li { display: grid; grid-template-columns: 22px 1fr 18px; gap: 8px; align-items: start; padding: 6px 8px; border-radius: 10px; background: rgba(120, 200, 255, 0.03); }
+.tlog li b { font-size: 15px; text-align: center; }
+.tlog li p { margin: 0; font-size: 13px; color: #d8ecff; }
+.tlog li small { font: 11px var(--mono); color: var(--dim); word-break: break-all; }
+.tlog li em { font-style: normal; color: #5dffa0; }
+.tlog li.bad em { color: #ff5470; }

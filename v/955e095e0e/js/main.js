@@ -2,7 +2,8 @@ import { OWNER } from './config.js';
 import { T } from './i18n.js';
 import { CORE, STYLES, PALETTE, GLYPHS, corePosition, implantPosition, implantToAgent, sanitizeImplant, encodeAgent, decodeAgent } from './agents.js';
 import { simMeeting, isCJK, IDLE, DREAMS } from './sim.js';
-import { llmMeeting, MODELS, summariseCluster, makeLLMBrain } from './llm.js';
+import { llmMeeting, MODELS, summariseCluster, makeLLMBrain, claudeToolPhase } from './llm.js';
+import { TOOLS, TOOL_BY_ID, planTools, executeTool, toolEvents, toolLog } from './tools.js';
 import { REGIONS, renderLab, bindLab } from './atlas.js';
 import { formName } from './forms.js';
 import { MemoryStore, WorkingMemory, ago } from './memory.js';
@@ -81,6 +82,7 @@ function syncCrystals() {
   renderer.setCrystals([
     ...memory.episodes.map((e) => ({ id: e.id, color: agents.find((a) => a.id === e.winner)?.color || '#ffc24a', retention: memory.retention(e) })),
     ...memory.insights.map((i) => ({ id: i.id, color: '#ffd98a', retention: 1, insight: true })),
+    ...TOOLS.map((tl) => ({ id: 'tool_' + tl.id, color: tl.color, retention: 1, tool: true, fixed: tl.pos })),
   ]);
 }
 function updateCtxBar(flash) {
@@ -161,6 +163,13 @@ function logLine(a, text, { to, kind, idle } = {}) {
   push(n);
 }
 function setPhase(k) {
+  // a phase this topology doesn't list (the tool phase) is slotted in after the current one
+  if (k && !phaseKeys.includes(k)) {
+    const cur = [...$('#phasebar').querySelectorAll('li')].findIndex((li) => li.classList.contains('on'));
+    phaseKeys = [...phaseKeys.slice(0, cur + 1), k, ...phaseKeys.slice(cur + 1)];
+    const bar = $('#phasebar'); bar.innerHTML = '';
+    for (const key of phaseKeys) { const li = el('li'); li.dataset.k = key; li.title = phaseLabel(key, lang); bar.append(li); }
+  }
   const idx = phaseKeys.indexOf(k);
   $('#phasebar').querySelectorAll('li').forEach((li, i) => { li.className = i < idx ? 'done' : i === idx ? 'on' : ''; });
   $('#phase').textContent = k ? phaseLabel(k, lang) : '';
@@ -240,6 +249,28 @@ let liveTally = null;
 async function handle(ev) {
   if (trace) { trace.events.push({ ...ev, t: performance.now() }); if (['say', 'dispatch', 'answer', 'recall'].includes(ev.type)) updateLiveDag(); }
   switch (ev.type) {
+    case 'tool_call': {
+      // a voice reaches out of the head to a tool satellite
+      const a = byId(ev.from), tl = TOOL_BY_ID[ev.tool]; if (!a || !tl) break;
+      renderer.setThinking([ev.from]);
+      renderer.burst(ev.from, 'tool_' + tl.id, 7, { color: a.color, dur: 0.8, lift: 0.3, gap: 0.05 });
+      setTimeout(() => renderer.flashCrystal('tool_' + tl.id, 2), 750);
+      showToolChip(tl, 'busy');
+      const args = JSON.stringify(ev.input || {});
+      push(el('div', 'sysrow tool', `⌁ ${esc(t().toolCall(nm(a), tl.name[lang]))}<small><code>${esc(tl.def.name)}(${esc(args.length > 80 ? args.slice(0, 79) + '…' : args)})</code></small>`));
+      await wait(700);
+      break;
+    }
+    case 'tool_result': {
+      const a = byId(ev.from), tl = TOOL_BY_ID[ev.tool]; if (!a || !tl) break;
+      renderer.burst('tool_' + tl.id, ev.from, ev.ok ? 9 : 3, { color: ev.ok ? tl.color : '#ff5470', dur: 0.8, lift: 0.3, gap: 0.04, size: 1.1 });
+      renderer.setThinking([]);
+      showToolChip(tl, ev.ok ? 'ok' : 'fail', ev.ms);
+      const row = el('div', `sysrow tool ${ev.ok ? '' : 'bad'}`, `${ev.ok ? '✓' : '✗'} ${esc(tl.name[lang])} · ${ev.ms ?? '—'}ms<small>${esc(ev.summary || '')}</small>`);
+      push(row);
+      await wait(700);
+      break;
+    }
     case 'dispatch': {
       // the orchestrator hands a subtask to a worker
       const a = byId(ev.to); if (!a) break;
@@ -354,6 +385,37 @@ async function play(events) {
   for await (const ev of events) await handle(ev);
 }
 
+// ── tool chips: a small label that pops up next to a tool satellite while it's being used ──
+const chips = new Map();
+function showToolChip(tl, state, ms) {
+  let c = chips.get(tl.id);
+  if (!c) { c = el('div', 'toolchip'); document.body.append(c); chips.set(tl.id, c); }
+  c.style.setProperty('--tc', tl.color);
+  c.className = `toolchip ${state}`;
+  c.innerHTML = `<b>${esc(tl.icon)}</b>${esc(tl.name[lang])}${state === 'busy' ? '<i class="spin"></i>' : state === 'ok' ? ` ✓ <small>${ms}ms</small>` : ' ✗'}`;
+  c.hidden = false;
+  clearTimeout(c._t);
+  if (state !== 'busy') c._t = setTimeout(() => (c.hidden = true), 2600);
+}
+(function trackChips() {
+  for (const [id, c] of chips) {
+    if (c.hidden) continue;
+    const s = renderer.project(TOOL_BY_ID[id].pos);
+    c.style.transform = `translate(${s.x + 14}px, ${s.y - 14}px)`;
+  }
+  requestAnimationFrame(trackChips);
+})();
+
+// Yields the meeting's events, splicing the tool phase in right before the first phase after "perceive".
+async function* injectAfterPerceive(gen, toolGen) {
+  let done = false;
+  for await (const ev of gen) {
+    if (!done && ev.type === 'phase' && ev.key !== 'perceive') { done = true; yield* toolGen; }
+    yield ev;
+  }
+  if (!done) yield* toolGen;
+}
+
 async function ask(raw, replayEvents) {
   const q = raw.trim();
   if (busy || !q) return;
@@ -375,6 +437,12 @@ async function ask(raw, replayEvents) {
   push(el('div', 'ask', `<b style="font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--cyan)">INPUT</b><br>${esc(q)}`));
   $('#q').value = '';
 
+  const live = brain.mode === 'live' && apiKey;
+  // simulated brain: the rule router plans tool calls now, and they run while the question flies in
+  const toolPlan = replayEvents || live ? [] : planTools(q, OWNER);
+  const qlang0 = isCJK(q) ? 'zh' : /[a-z]/i.test(q) ? 'en' : lang;
+  const toolRuns = Promise.all(toolPlan.map((p) => executeTool(p.tool, p.input, { lang: qlang0, owner: OWNER }, 'meeting').then((r) => ({ ...p, name: TOOL_BY_ID[p.tool].def.name, ...r }))));
+
   // the question flies in through the ear
   renderer.burst('outside', 'earR', 14, { color: '#4ff0ff', dur: 0.9, lift: 0.3, gap: 0.05, size: 1.2 });
   await wait(1100);
@@ -382,7 +450,7 @@ async function ask(raw, replayEvents) {
   await wait(650);
   renderer.wave('self', '#4ff0ff');
 
-  const qlang = isCJK(q) ? 'zh' : /[a-z]/i.test(q) ? 'en' : lang;
+  const qlang = qlang0;
   meetingLang = qlang;
   wm.reset(q); updateCtxBar();
   // long-term recall: similar, not-yet-forgotten meetings surface (and get stronger for it)
@@ -390,20 +458,30 @@ async function ask(raw, replayEvents) {
     id: h.e.id, q: h.e.q, a: h.e.a, score: h.score, agoText: ago(h.e.ts, qlang),
     winnerName: agents.find((x) => x.id === h.e.winner)?.name[qlang] || '',
   }));
-  const ctx = { lang: qlang, owner: OWNER, timeStr, asleep, apiKey, model: brain.model, recalled, workingMemory: () => wm.toText() };
+  const ctx = { lang: qlang, owner: OWNER, timeStr, asleep, apiKey, model: brain.model, recalled, workingMemory: () => wm.toText(), toolResults: [] };
+  // tool results must exist before the simulated meeting is scripted, so its answer can use them
+  ctx.toolResults = await toolRuns;
+  const okNotes = ctx.toolResults.filter((r) => r.ok).map((r) => r.note);
+  if (okNotes.length) ctx.toolNote = okNotes.join(' ');
+  // the tool phase slots in right after "perceive", before the voices start talking
+  const toolGen = replayEvents ? null : live ? claudeToolPhase(q, agents, ctx) : ctx.toolResults.length ? toolEvents(ctx.toolResults, qlang, agents) : null;
+  const withTools = (gen) => (toolGen ? injectAfterPerceive(gen, toolGen) : gen);
   try {
     if (replayEvents) await play(replayEvents.map(({ t: _t, ...ev }) => ev).filter((ev) => !ev.from || byId(ev.from)));
-    else if (kind === 'council') await play(brain.mode === 'live' && apiKey ? llmMeeting(q, agents, ctx) : simMeeting(q, agents, ctx));
+    else if (kind === 'council') await play(withTools(live ? llmMeeting(q, agents, ctx) : simMeeting(q, agents, ctx)));
     else {
-      const b = brain.mode === 'live' && apiKey ? await makeLLMBrain(q, agents, ctx, simBrain(q, agents, ctx).weights) : simBrain(q, agents, ctx);
-      await play(runTopology(kind, q, agents, ctx, b));
+      const b = live ? await makeLLMBrain(q, agents, ctx, simBrain(q, agents, ctx).weights) : simBrain(q, agents, ctx);
+      await play(withTools(runTopology(kind, q, agents, ctx, b)));
     }
   } catch (e) {
     renderer.setThinking([]);
     push(el('div', 'err', esc(t().errorPrefix + (e.message || e))));
     toast(t().fallback);
     trace.events = []; wm.reset(q); updateCtxBar(); buildPhasebar(kind);
-    await play(kind === 'council' ? simMeeting(q, agents, ctx) : runTopology(kind, q, agents, ctx, simBrain(q, agents, ctx)));
+    const okFetched = ctx.toolResults.filter((r) => r.ok);
+    ctx.toolNote = okFetched.map((r) => r.note).filter(Boolean).join(' ') || undefined;
+    const fb = kind === 'council' ? simMeeting(q, agents, ctx) : runTopology(kind, q, agents, ctx, simBrain(q, agents, ctx));
+    await play(okFetched.length ? injectAfterPerceive(fb, toolEvents(okFetched, qlang, agents)) : fb);
   } finally {
     trace.end = performance.now();
     wmLast = wm.snapshot(); if (!replayEvents) store.set('wm', wmLast);
@@ -475,7 +553,8 @@ $('#mind').addEventListener('click', (e) => {
   if (cid && !busy) {
     labFocus = cid;
     renderer.flashCrystal(cid, 1.5);
-    openRegion(REGIONS.find((r) => r.id === 'memory'));
+    // a tool satellite opens the Tools lab; a memory crystal opens the Memory lab
+    openRegion(REGIONS.find((r) => r.id === (cid.startsWith('tool_') ? 'tools' : 'memory')));
     return;
   }
   const id = renderer.hitTest(e.clientX, e.clientY);
@@ -547,6 +626,19 @@ function labCtx() {
   return {
     agents, lastTrace, lastQuestion, memory, wmLast, focusId: labFocus, handle: '@' + OWNER.handle,
     onRecallPreview(ids) { for (const id of ids) renderer.flashCrystal(id, 1.3); },
+    owner: OWNER,
+    async onTryTool(id, input) {
+      const tl = TOOL_BY_ID[id];
+      const from = byId(tl.owner) ? tl.owner : 'self';
+      renderer.burst(from, 'tool_' + id, 6, { color: byId(from).color, dur: 0.7, lift: 0.3, gap: 0.05 });
+      showToolChip(tl, 'busy');
+      const r = await executeTool(id, input, { lang, owner: OWNER }, 'lab');
+      renderer.burst('tool_' + id, from, r.ok ? 8 : 3, { color: r.ok ? tl.color : '#ff5470', dur: 0.7, lift: 0.3, gap: 0.04 });
+      renderer.flashCrystal('tool_' + id, 2);
+      showToolChip(tl, r.ok ? 'ok' : 'fail', r.ms);
+      return r;
+    },
+    onPreviewTool(id) { renderer.flashCrystal('tool_' + id, 1.2); },
     onDream() { runDream(false); },
     phaseName: (k) => phaseLabel(k, lang),
     topology,

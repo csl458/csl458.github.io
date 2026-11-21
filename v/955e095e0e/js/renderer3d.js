@@ -322,7 +322,7 @@ export class MindRenderer {
     list.forEach((c, i) => {
       let s = this.crystals.get(c.id);
       if (!s) {
-        const geo = new THREE.EdgesGeometry(c.insight ? new THREE.IcosahedronGeometry(0.055, 0) : new THREE.OctahedronGeometry(0.036, 0));
+        const geo = new THREE.EdgesGeometry(c.tool ? new THREE.TetrahedronGeometry(0.075, 0) : c.insight ? new THREE.IcosahedronGeometry(0.055, 0) : new THREE.OctahedronGeometry(0.036, 0));
         const mesh = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: c.color, ...additive, opacity: 0 }));
         mesh.frustumCulled = false; this.world.add(mesh);
         s = { mesh, pos: [0, 0, 0], glow: 0, born: 0, spin: Math.random() * TAU };
@@ -519,7 +519,8 @@ export class MindRenderer {
     // memory crystals: episodes on an inner tilted orbit, insights (from dreams) on an outer one
     {
       const C = this.cdots; let ci = 0;
-      const eps = [...this.crystals.values()].filter((c) => !c.insight), ins = [...this.crystals.values()].filter((c) => c.insight);
+      const eps = [...this.crystals.values()].filter((c) => !c.insight && !c.tool), ins = [...this.crystals.values()].filter((c) => c.insight);
+      for (const c of this.crystals.values()) if (c.tool) c.pos = [c.fixed[0], c.fixed[1] + Math.sin(t * 0.8 + c.spin) * 0.03, c.fixed[2]];
       const place = (c, k, n, R, y0, tilt, speed) => {
         const a = (k / Math.max(1, n)) * TAU + t * speed;
         const x = Math.cos(a) * R, z = Math.sin(a) * R;
@@ -530,7 +531,7 @@ export class MindRenderer {
       for (const c of this.crystals.values()) {
         c.born = Math.min(1, c.born + dt / 1.4);
         c.glow *= Math.exp(-dt * 1.2);
-        const vis = c.insight ? 1 : clamp((c.retention - 0.04) / 0.3, 0, 1) * 0.7 + 0.3 * Math.min(1, c.retention / 0.04);
+        const vis = c.tool ? 0.45 : c.insight ? 1 : clamp((c.retention - 0.04) / 0.3, 0, 1) * 0.7 + 0.3 * Math.min(1, c.retention / 0.04);
         const op = (0.18 + 0.75 * vis + 0.6 * c.glow) * ease(c.born) * clamp((this.assemble - 0.6) / 0.4, 0, 1);
         c.mesh.position.set(...c.pos);
         c.mesh.rotation.set(t * 0.6 + c.spin, t * 0.9 + c.spin, 0);
@@ -540,7 +541,7 @@ export class MindRenderer {
           C.P.set(c.pos, ci * 3);
           const col = c.mesh.material.color;
           C.C.set([col.r, col.g, col.b], ci * 3);
-          C.S[ci] = (c.insight ? 0.09 : 0.05) * (1 + 1.2 * c.glow);
+          C.S[ci] = (c.tool ? 0.07 : c.insight ? 0.09 : 0.05) * (1 + 1.2 * c.glow);
           C.A[ci] = Math.min(1, op * 0.8);
           ci++;
         }

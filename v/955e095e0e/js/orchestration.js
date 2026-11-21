@@ -11,6 +11,7 @@ export const PHASES = {
   relay: { zh: '接力', en: 'Relay' }, plan: { zh: '拆解', en: 'Plan' }, work: { zh: '执行', en: 'Work' }, aggregate: { zh: '汇总', en: 'Aggregate' },
   open: { zh: '立论', en: 'Open' }, rebut: { zh: '反驳', en: 'Rebut' }, judge: { zh: '裁决', en: 'Judge' },
   post: { zh: '张贴', en: 'Post' }, converge: { zh: '收敛', en: 'Converge' },
+  tools: { zh: '取证', en: 'Gather' },
 };
 export const phaseLabel = (k, lang) => PHASES[k]?.[lang] || k;
 
@@ -210,7 +211,7 @@ export function buildDag(events) {
   const nodes = [], byId = {}, lastBy = {};
   let root = null, last = null;
   events.forEach((ev, i) => {
-    if (!['say', 'dispatch', 'answer', 'recall'].includes(ev.type)) return;
+    if (!['say', 'dispatch', 'answer', 'recall', 'tool_result'].includes(ev.type)) return;
     const id = ev.node?.id || 'e' + i;
     let deps = ev.node?.deps;
     const agent = ev.type === 'answer' ? 'self' : ev.type === 'recall' ? 'memory' : ev.from;
@@ -222,8 +223,9 @@ export function buildDag(events) {
       else if (ev.kind === 'reply' || ev.kind === 'recall') deps = [last];
       else deps = [lastBy[ev.from] || root];
     }
+    if (ev.type === 'answer') deps = [...deps, ...nodes.filter((n) => n.type === 'tool_result').map((n) => n.id)];
     deps = [...new Set(deps.filter((d) => byId[d] && d !== id))];
-    const n = { id, agent, type: ev.type, kind: ev.kind || ev.type, text: ev.text || '', deps, to: ev.to, i };
+    const n = { id, agent, type: ev.type, kind: ev.kind || (ev.type === 'tool_result' ? 'tool:' + ev.tool : ev.type), text: ev.text || ev.summary || '', deps, to: ev.to, i };
     n.depth = deps.length ? Math.max(...deps.map((d) => byId[d].depth)) + 1 : 0;
     nodes.push(n); byId[id] = n;
     if (!root) root = id;
@@ -275,7 +277,9 @@ export function dagSVG(dag, agents, { width = 400, height = 0, mini = false, act
   for (const n of dag.nodes) {
     const p = pos[n.id], c = col(n.agent);
     const big = n.type === 'answer' || n.depth === 0;
-    const shape = n.type === 'dispatch'
+    const shape = n.type === 'tool_result'
+      ? `<polygon points="${p.x.toFixed(1)},${(p.y - R * 1.3).toFixed(1)} ${(p.x + R * 1.15).toFixed(1)},${(p.y + R * 0.75).toFixed(1)} ${(p.x - R * 1.15).toFixed(1)},${(p.y + R * 0.75).toFixed(1)}" style="fill:${c}"/>`
+      : n.type === 'dispatch'
       ? `<rect x="${(p.x - R).toFixed(1)}" y="${(p.y - R).toFixed(1)}" width="${2 * R}" height="${2 * R}" rx="1.5" transform="rotate(45 ${p.x.toFixed(1)} ${p.y.toFixed(1)})" style="fill:${c}"/>`
       : `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${big ? R * 1.35 : R}" style="fill:${c}"${n.id === active ? ' class="dnew"' : ''}/>`;
     const name = agents.find((a) => a.id === n.agent)?.name;
