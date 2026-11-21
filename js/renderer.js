@@ -51,8 +51,8 @@ export class MindRenderer {
     this.cv.style.width = this.w + 'px'; this.cv.style.height = this.h + 'px';
     const wide = this.w > 960;
     this.cx = wide ? this.w * 0.42 : this.w / 2;
-    this.cy = wide ? this.h * 0.43 : this.h * 0.4;
-    this.scale = wide ? Math.min(this.h * 0.255, this.w * 0.2) : Math.min(this.w * 0.36, this.h * 0.2);
+    this.cy = wide ? this.h * 0.44 : this.h * 0.41;
+    this.scale = wide ? Math.min(this.h * 0.29, this.w * 0.21) : Math.min(this.w * 0.38, this.h * 0.21);
   }
 
   setAgents(list) {
@@ -76,7 +76,7 @@ export class MindRenderer {
     const p = this.proj(this.posOf(id));
     return { x: p.x, y: p.y, r: this.orbR(a, p) };
   }
-  orbR(a, p) { return this.scale * p.s * 0.042 * (a.id === 'self' ? 1.25 : 1) * (0.3 + 0.7 * ease(a.birth)); }
+  orbR(a, p) { return this.scale * p.s * 0.05 * (a.id === 'self' ? 1.25 : 1) * (0.3 + 0.7 * ease(a.birth)); }
 
   hitTest(x, y) {
     if (!this.proj) return null;
@@ -304,10 +304,10 @@ export class MindRenderer {
       // label
       ctx.globalCompositeOperation = 'source-over';
       const name = a.name[zh ? 'zh' : 'en'];
-      ctx.font = `${Math.round(10 + 2 * p.s)}px "JetBrains Mono", ui-monospace, monospace`;
+      ctx.font = `600 ${Math.round(12 + 3 * p.s)}px "JetBrains Mono", ui-monospace, monospace`;
       ctx.textAlign = 'center';
       ctx.fillStyle = rgba(a.rgb, (0.35 + 0.45 * ((p.z + 1) / 2) + 0.3 * a.speak) * vis * dim);
-      ctx.fillText((zh ? name : name.toUpperCase()) + ' ' + a.glyph, p.x, p.y + r * 2.4 + 12);
+      ctx.fillText((zh ? name : name.toUpperCase()) + ' ' + a.glyph, p.x, p.y + r * 2.4 + 15);
       ctx.globalCompositeOperation = 'lighter';
     }
 

@@ -19,7 +19,7 @@ const CATS = [
   ['greet', /^\s*(hi|hello|hey|yo|sup|你好|嗨|哈喽|在吗|早上好|晚上好)\b|^\s*(你好|嗨|哈喽|在吗)/i],
   ['identity', /(who are you|about you|yourself|your name|who is|你是谁|介绍|自我介绍|名字|你叫|你是什么人)/i],
   ['contact', /(contact|e-?mail|reach you|hire|collab|work with|联系|邮箱|合作|招聘|实习|工作机会|找你|简历|resume|cv)/i],
-  ['mind', /(how do(es)? (this|you) work|this (site|page)|what is this|society of mind|这个网站|这个页面|怎么运作|原理|这是什么|怎么做的)/i],
+  ['mind', /(how do(es)? (this|you) work|this (site|page)|what is this|这个网站|这个页面|怎么运作|原理|这是什么|怎么做的)/i],
   ['work', /(what do you do|working on|project|research|stud(y|ies)|skill|tech stack|做什么|研究|项目|技能|在做|学什么|专业|方向)/i],
   ['joke', /(joke|funny|make me laugh|笑话|搞笑|逗我|好玩的)/i],
   ['ai', /(\bai\b|a\.i\.|agent|llm|gpt|claude|neural|智能体|人工智能|大模型|模型|多智能体|意识|conscious|sentien|agi|机器人)/i],
@@ -69,7 +69,7 @@ const SAY = {
 // Category-specific proposals that override the generic ones.
 const SAY_CAT = {
   identity: {
-    memory: { zh: ['档案调出来了：{name}，@{handle}，坐标{loc}，{aff}。', '关于主人的事我最清楚：{name}，在{aff}，研究方向是{focus}。'], en: ['File retrieved: {name}, @{handle}, based in {loc}, {aff}.', 'I keep the facts: {name}, at {aff}, into {focus}.'] },
+    memory: { zh: ['档案调出来了：{name}，坐标{loc}，{aff}。', '关于主人的事我最清楚：{name}，在{aff}，研究方向是{focus}。'], en: ['File retrieved: {name}, based in {loc}, {aff}.', 'I keep the facts: {name}, at {aff}, into {focus}.'] },
     dreamer: { zh: ['他是谁？他是一群会吵架的念头，碰巧共用一张脸。'], en: ['Who are they? A crowd of arguing thoughts that happen to share one face.'] },
     jester: { zh: ['我们是谁？我们是 {n} 个房客，房东不收租。'], en: ['Who are we? {n} tenants. The landlord doesn\'t charge rent.'] },
   },
@@ -136,10 +136,10 @@ const RIVAL = {
 
 const FINAL = {
   greet: { zh: ['你好！你刚刚把我脑子里的 {n} 个人格同时吵醒了。随便问点什么——它们很乐意为你吵一架。'], en: ['Hi! You just woke up all {n} voices in my head at once. Ask anything — they\'d love to argue about it for you.'] },
-  identity: { zh: ['我是 {name}（@{handle}），在{loc}，{aff}。我着迷于{focus}——你现在看到的，就是我大脑里的会议室。点任何一个人格，它会告诉你我的一部分。'], en: ['I\'m {name} (@{handle}), based in {loc}, {aff}. I\'m fascinated by {focus} — what you\'re looking at is the meeting room inside my head. Click any voice and it\'ll tell you a piece of me.'] },
+  identity: { zh: ['我是 {name}，在{loc}，{aff}。我着迷于{focus}——你现在看到的，就是我大脑里的会议室。点任何一个人格，它会告诉你我的一部分。'], en: ['I\'m {name}, based in {loc}, {aff}. I\'m fascinated by {focus} — what you\'re looking at is the meeting room inside my head. Click any voice and it\'ll tell you a piece of me.'] },
   contact: { zh: ['最快的方式：在 GitHub 上找我 → {github}{mail}。想一起做 agent 相关的东西？直接开 issue 或发消息，我的「建造」已经在搓手了。'], en: ['Fastest route: find me on GitHub → {github}{mail}. Want to build something with agents together? Open an issue or drop a message — my Builder is already rolling up its sleeves.'] },
   work: { zh: ['最近在做：{focus}。一句话——我在研究怎么让一群 agent 像一个大脑那样思考。这个页面就是一个活的样本。'], en: ['These days: {focus}. In one line — I\'m exploring how a crowd of agents can think like one mind. This page is a living sample.'] },
-  mind: { zh: ['这是一个 Society of Mind：每个发光的点都是一个有性格的 agent。你提问后，它们会发散、交锋、表决，最后由「自我」合成答案。默认是模拟大脑；在 ⚙ 里填入你自己的 Claude API key，它们就会变成真正的 LLM agent。你还可以给我植入一个新人格。'], en: ['This is a Society of Mind: every glowing point is an agent with its own personality. When you ask, they diverge, clash, vote, and Self synthesises the answer. By default the brain is simulated; add your own Claude API key under ⚙ and they become real LLM agents. You can also implant a new persona into me.'] },
+  mind: { zh: ['这是我的大脑：每个发光的点都是一个有性格的 agent。你提问后，它们会发散、交锋、表决，最后由「自我」合成答案。默认是模拟大脑；在 ⚙ 里填入你自己的 Claude API key，它们就会变成真正的 LLM agent。你还可以给我植入一个新人格。'], en: ['This is my mind: every glowing point is an agent with its own personality. When you ask, they diverge, clash, vote, and Self synthesises the answer. By default the brain is simulated; add your own Claude API key under ⚙ and they become real LLM agents. You can also implant a new persona into me.'] },
   ai: { zh: ['我的看法：一个模型像一个天才，一群 agent 更像一个社会——会争论、会犯错，也会互相纠错。真正有意思的不是谁最聪明，而是它们如何达成共识。至于意识……我们刚为这事吵了三秒，没结论。'], en: ['My take: one model is a genius; many agents are a society — they argue, make mistakes, and correct each other. The interesting part isn\'t who\'s smartest, it\'s how they reach consensus. As for consciousness… we argued for three seconds. No verdict.'] },
   meaning: { zh: ['会议的结论：意义不是找到的，是被一群互相争吵的念头一起搭起来的——就像刚才这样。'], en: ['The meeting concludes: meaning isn\'t found, it\'s assembled by a crowd of quarrelling thoughts — just like the one you just watched.'] },
   advice: { zh: ['大脑的建议：先做一个最小的、可逆的尝试，给自己定一个复盘日期。「怀疑」负责止损，「做梦」负责方向，「建造」负责今天就动手。'], en: ['The mind advises: take the smallest reversible step and set a date to review it. Skeptic guards the downside, Dreamer holds the direction, Builder starts today.'] },
@@ -178,7 +178,7 @@ export const DREAMS = {
 
 function ownerVars(owner, lang, timeStr, asleep) {
   return {
-    name: owner.name, handle: owner.handle, loc: owner.location[lang], aff: owner.affiliation[lang],
+    name: '@' + owner.handle, handle: owner.handle, loc: owner.location[lang], aff: owner.affiliation[lang],
     focus: owner.focus[lang], github: owner.github.replace(/^https?:\/\//, ''),
     mail: owner.email ? (lang === 'zh' ? `，或邮件 ${owner.email}` : `, or email ${owner.email}`) : '',
     time: timeStr,

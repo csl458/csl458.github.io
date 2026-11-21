@@ -24,7 +24,7 @@ async function getClient(apiKey) {
 
 function ownerBrief(owner) {
   return [
-    `Name: ${owner.name} (GitHub @${owner.handle}, ${owner.github})`,
+    `GitHub: @${owner.handle} (${owner.github})`,
     `Location: ${owner.location.en}. Affiliation: ${owner.affiliation.en}.`,
     `Focus: ${owner.focus.en}.`,
     owner.email ? `Email: ${owner.email}` : 'Email: not public.',
@@ -35,9 +35,9 @@ function ownerBrief(owner) {
 function systemFor(agent, roster, owner) {
   return `${agent.persona}
 
-You are one voice inside the mind of ${owner.name}. This web page is their living business card: visitors ask the mind a question and watch the voices hold a meeting before Self answers.
+You are one voice inside the mind of @${owner.handle}. This web page is their living business card: visitors ask the mind a question and watch the voices hold a meeting before Self answers.
 The voices in the room: ${roster}.
-Facts about ${owner.name} (only these are true; never invent others):
+Facts about @${owner.handle} (only these are true; never invent others):
 ${ownerBrief(owner)}
 
 Rules: stay in character. Reply in the same language as the visitor's question. Be vivid and concise (one or two sentences, under 45 words). No markdown.`;

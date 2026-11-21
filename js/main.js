@@ -60,8 +60,8 @@ function applyLang() {
   document.documentElement.lang = lang;
   document.querySelectorAll('[data-t]').forEach((n) => { const v = t()[n.dataset.t]; if (typeof v === 'string') n.textContent = v; });
   $('#q').placeholder = t().placeholder;
-  $('#owner-name').textContent = OWNER.name;
-  $('#owner-tag').textContent = OWNER.tagline[lang];
+  $('#owner-name').textContent = OWNER.tagline[lang];
+  $('#owner-tag').textContent = OWNER.subtitle[lang];
   $('#owner-loc').textContent = `◎ ${OWNER.location[lang]} · ${OWNER.affiliation[lang].replace(/^.*\((\w+)\).*$/, '$1')}`;
   const gh = $('#owner-gh'); gh.href = OWNER.github; gh.textContent = '@' + OWNER.handle;
   $('#owner-links').innerHTML = [
@@ -228,7 +228,7 @@ async function handle(ev) {
 
 async function typeAnswer(text) {
   const box = $('#answer'), p = $('#answer-text');
-  box.hidden = false; p.textContent = '';
+  box.hidden = false; p.textContent = ''; document.body.classList.add('has-answer');
   const chars = [...text];
   const per = isCJK(text) ? 26 : 11;
   for (let i = 0; i < chars.length; i += speed < 1 ? 6 : 1) {
@@ -250,7 +250,7 @@ async function ask(raw) {
   $('#btn-skip').hidden = false;
   $('#minutes').classList.add('live');
   $('#minutes').classList.remove('collapsed');
-  $('#answer').hidden = true; $('#agent-card').hidden = true; hush();
+  $('#answer').hidden = true; document.body.classList.remove('has-answer'); $('#agent-card').hidden = true; hush();
   renderTally(null); liveTally = null;
   renderer.sleepTarget = 0; renderer.focusTarget = 1;
   push(el('div', 'ask', `<b style="font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--cyan)">INPUT</b><br>${esc(q)}`));
@@ -457,7 +457,7 @@ $('#btn-skip').onclick = () => { speed = 0.12; };
 $('#btn-implant').onclick = openImplant;
 $('#btn-about').onclick = () => $('#dlg-about').showModal();
 $('#btn-lang').onclick = () => { lang = lang === 'zh' ? 'en' : 'zh'; store.set('lang', lang); applyLang(); };
-$('#answer-close').onclick = () => ($('#answer').hidden = true);
+$('#answer-close').onclick = () => { $('#answer').hidden = true; document.body.classList.remove('has-answer'); };
 $('#btn-collapse').onclick = () => $('#minutes').classList.toggle('collapsed');
 addEventListener('keydown', (e) => { if (e.key === '/' && document.activeElement !== $('#q') && !document.querySelector('dialog[open]')) { e.preventDefault(); $('#q').focus(); } });
 if (innerWidth <= 960) $('#minutes').classList.add('collapsed');
@@ -469,8 +469,8 @@ async function boot() {
   $('#nthoughts').textContent = stats.thoughts.toLocaleString();
   setInterval(tick, 15000);
   const lines = lang === 'zh'
-    ? ['> 挂载皮层 ........ ok', `> 唤醒 ${agents.length} 个人格 ... ok`, '> 校准分歧阈值 .... ok', `> 悉尼 ${timeStr} · ${asleep ? '进入睡眠' : '清醒'}`, '> SOCIETY OF MIND 在线']
-    : ['> mounting cortex ........ ok', `> waking ${agents.length} voices ....... ok`, '> calibrating disagreement ok', `> sydney ${timeStr} · ${asleep ? 'asleep' : 'awake'}`, '> SOCIETY OF MIND online'];
+    ? ['> 挂载皮层 ........ ok', `> 唤醒 ${agents.length} 个人格 ... ok`, '> 校准分歧阈值 .... ok', `> 悉尼 ${timeStr} · ${asleep ? '进入睡眠' : '清醒'}`, '> NEURAL UPLINK 已建立']
+    : ['> mounting cortex ........ ok', `> waking ${agents.length} voices ....... ok`, '> calibrating disagreement ok', `> sydney ${timeStr} · ${asleep ? 'asleep' : 'awake'}`, '> NEURAL UPLINK established'];
   const pre = $('#boot-log');
   const quick = params.has('nointro');
   for (const l of lines) { pre.textContent += l + '\n'; if (!quick) await new Promise((r) => setTimeout(r, 260)); }

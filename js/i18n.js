@@ -1,6 +1,6 @@
 export const T = {
   zh: {
-    brand: 'SOCIETY OF MIND',
+    brand: 'NEURAL UPLINK',
     placeholder: '问我的大脑任何问题…',
     ask: '提问',
     thinking: '开会中…',
@@ -40,13 +40,13 @@ export const T = {
     keyNeeded: '要使用 Claude 大脑，请先填入 API key。',
     fallback: '已退回模拟大脑。',
     aboutTitle: '这是什么？',
-    about: (o) => `这是 ${o.name} 的名片，也是一间开着门的会议室。\n\n灵感来自 Marvin Minsky 的《心智社会》：心智不是一个整体，而是一群各有脾气的小 agent。你提的每个问题，都会在这颗头里开一场会：感知 → 发散 → 交锋 → 表决 → 合成。\n\n你可以：\n· 点任何一个光点，看看这个人格是谁\n· 给它植入一个新人格，再把链接分享出去\n· 在 ⚙ 里接上真实的 Claude，看真正的多 agent 协作\n\n悉尼深夜时，它们会睡觉、做梦。`,
+    about: (o) => `这是我的名片，也是一间开着门的会议室。\n\n心智不是一个整体，而是一群各有脾气的小 agent。你提的每个问题，都会在这颗头里开一场会：感知 → 发散 → 交锋 → 表决 → 合成。\n\n你可以：\n· 点任何一个光点，看看这个人格是谁\n· 给它植入一个新人格，再把链接分享出去\n· 在 ⚙ 里接上真实的 Claude，看真正的多 agent 协作\n\n悉尼深夜时，它们会睡觉、做梦。`,
     card: '名片',
     close: '关闭',
     errorPrefix: '⚠ ',
   },
   en: {
-    brand: 'SOCIETY OF MIND',
+    brand: 'NEURAL UPLINK',
     placeholder: 'Ask my mind anything…',
     ask: 'Ask',
     thinking: 'In session…',
@@ -86,7 +86,7 @@ export const T = {
     keyNeeded: 'Add an API key to use the Claude brain.',
     fallback: 'Fell back to the simulated brain.',
     aboutTitle: 'What is this?',
-    about: (o) => `This is ${o.name}'s business card — and a meeting room with the door left open.\n\nInspired by Marvin Minsky's "The Society of Mind": a mind isn't one thing but a crowd of small agents with tempers of their own. Every question you ask starts a meeting inside this head: perceive → diverge → clash → vote → synthesise.\n\nYou can:\n· click any light to meet that voice\n· implant a new persona and share it as a link\n· plug in real Claude under ⚙ and watch genuine multi-agent collaboration\n\nLate at night in Sydney, they sleep. And dream.`,
+    about: (o) => `This is my business card — and a meeting room with the door left open.\n\nA mind isn't one thing but a crowd of small agents with tempers of their own. Every question you ask starts a meeting inside this head: perceive → diverge → clash → vote → synthesise.\n\nYou can:\n· click any light to meet that voice\n· implant a new persona and share it as a link\n· plug in real Claude under ⚙ and watch genuine multi-agent collaboration\n\nLate at night in Sydney, they sleep. And dream.`,
     card: 'Card',
     close: 'Close',
     errorPrefix: '⚠ ',

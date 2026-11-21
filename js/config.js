@@ -3,11 +3,14 @@
 //  Everything the "Memory" agent knows about you lives here.
 // ─────────────────────────────────────────────────────────────
 export const OWNER = {
-  name: 'CS458',
   handle: 'csl458',
   tagline: {
     zh: '我的大脑是一群 agent。',
-    en: 'My mind is a society of agents.',
+    en: 'My mind is a crowd of agents.',
+  },
+  subtitle: {
+    zh: '问我任何问题——看它们为你吵一架。',
+    en: 'Ask anything. Watch them argue it out.',
   },
   location: { zh: '悉尼', en: 'Sydney' },
   affiliation: { zh: '悉尼科技大学 (UTS)', en: 'University of Technology Sydney (UTS)' },
