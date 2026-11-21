@@ -5,8 +5,8 @@
 export const OWNER = {
   handle: 'csl458',
   tagline: {
-    zh: '我的大脑是一群 agent。',
-    en: 'My mind is a crowd of agents.',
+    zh: '大脑是一群 agent。',
+    en: 'Mind is a crowd of agents.',
   },
   subtitle: {
     zh: '问我任何问题——看它们为你吵一架。',
